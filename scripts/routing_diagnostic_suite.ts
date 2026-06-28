@@ -14,7 +14,7 @@ import {
   buildKnowledgeRefsFromRows,
   KNOWLEDGE_LAYER_CHAR_LIMIT,
 } from "../lib/knowledge/knowledge-context";
-import { resolveRoutingDecision } from "../lib/mayor-routing";
+import { resolveDeterministicMayorRoutingDecision } from "../lib/mayor-routing";
 import { resolveManagerRoutingDecision } from "../lib/manager-routing";
 import { isStructureMutationCommand } from "../lib/structure-command-intent";
 import { classifyTechDepartmentIntent } from "../lib/tech-department/intent";
@@ -100,25 +100,27 @@ async function runMayorTests(
       name: "structure_command_llm slang",
       text: "запилить секцию для видео в city с двумя ботами",
       expectTarget: PROTECTED.TECH,
-      expectMatchedBy: "structure_command_llm",
+      expectMatchedBy: "mayor_agent",
       keywordGate: false,
     },
     {
       name: "semantic lawyers",
       text: "какая дата суда",
       expectTarget: PROTECTED.LAWYERS,
-      expectMatchedBy: "semantic",
+      expectMatchedBy: "mayor_agent",
     },
     {
       name: "explicit_name Citizly (read-only)",
       text: "почему не работает роутинг в Citizly",
       expectNotTarget: PROTECTED.TECH,
       expectAction: "delegate",
+      expectMatchedBy: "mayor_agent",
     },
     {
       name: "diagnose not tech",
       text: "почему не работает роутинг в Citizly",
       expectNotTarget: PROTECTED.TECH,
+      expectMatchedBy: "mayor_agent",
     },
     {
       name: "conflict topic+structure",
@@ -129,7 +131,7 @@ async function runMayorTests(
     {
       name: "typo structure slang",
       text: "хочу замутить новый unit под health prompts в city",
-      expectTarget: PROTECTED.TECH,
+      expectMatchedBy: "mayor_agent",
     },
   ];
 
@@ -139,14 +141,39 @@ async function runMayorTests(
       record(
         "Mayor routing",
         c.name,
-        "keyword gate false before LLM",
+        "keyword gate false before Mayor",
         `keyword gate true`,
         "AMBIGUOUS",
-        "Phrase also hits keyword gate — LLM gate not isolated",
+        "Phrase also hits keyword gate — Mayor agent path not isolated",
       );
     }
 
-    const decision = await resolveRoutingDecision(c.text, buildings);
+    if (c.expectMatchedBy === "mayor_agent" || c.expectMatchedBy === "semantic" || c.expectMatchedBy === "explicit_name") {
+      const deterministic = await resolveDeterministicMayorRoutingDecision(c.text, buildings);
+      record(
+        "Mayor routing",
+        c.name,
+        "deterministic gate null → Mayor agent decides (MR-2)",
+        deterministic === null ? "null" : `unexpected ${deterministic.matchedBy}`,
+        deterministic === null ? "PASS" : "AMBIGUOUS",
+        "Semantic routing is exercised by configured Mayor agent, not resolveRoutingDecision",
+      );
+      continue;
+    }
+
+    const decision = await resolveDeterministicMayorRoutingDecision(c.text, buildings);
+    if (!decision) {
+      record(
+        "Mayor routing",
+        c.name,
+        "expected deterministic decision",
+        "null (Mayor agent path)",
+        "FAIL",
+        "Expected structure-command deterministic routing",
+      );
+      continue;
+    }
+
     let status: TestStatus = "PASS";
     const parts: string[] = [
       `action=${decision.action}`,
@@ -158,11 +185,7 @@ async function runMayorTests(
     if (c.expectTarget && decision.target !== c.expectTarget) status = "FAIL";
     if (c.expectNotTarget && decision.target === c.expectNotTarget) status = "FAIL";
     if (c.expectMatchedBy && decision.matchedBy !== c.expectMatchedBy) {
-      if (c.expectMatchedBy === "structure_command_llm" && decision.matchedBy === "structure_command") {
-        status = "AMBIGUOUS";
-      } else {
-        status = "FAIL";
-      }
+      status = "FAIL";
     }
     if (c.expectAction && decision.action !== c.expectAction) status = "FAIL";
 
@@ -274,6 +297,16 @@ function runTechIntentTests() {
   }> = [
     { name: "pure diagnose", text: "почему не работает роутинг", expected: "diagnose" },
     { name: "pure structure", text: "создай новый отдел для видео", expected: "structure" },
+    {
+      name: "code audit file",
+      text: "проверь lib/execute-chat-task.ts функцию executeTechDepartmentTask",
+      expected: "code_audit",
+    },
+    {
+      name: "runtime diagnose logs",
+      text: "что было в логах routing_logs за сегодня",
+      expected: "diagnose",
+    },
     {
       name: "conflict diagnose wins",
       text: "почему не создал отдел для видео",

@@ -1,49 +1,58 @@
 import { MayorRoutingDecision } from "./office-types";
-import { MAYOR_ROUTING_PROMPT_PREFIX } from "./mayor-persona";
+import { MAYOR_ROUTING_PARSE_ERROR_ANSWER } from "./mayor-persona";
 import { isStructureMutationCommand } from "./structure-command-intent";
-import { isStructureMutationCommandSemantic } from "./structure-command-semantic-gate";
 import { resolveMainChamber } from "./workspace/resolve-main-chamber";
-import { TECH_DEPARTMENT_BUILDING_ID } from "./workspace/tech-department";
+import {
+  requireExternalEntryOfficeId,
+  requireTechDepartmentBuildingId,
+} from "./workspace/graph-identity-required";
+
+export type MayorAgentRoutingEnvelope = {
+  decision: MayorRoutingDecision;
+  answer: string | null;
+};
+
+export type MayorBuildingRow = {
+  id: string;
+  name: string;
+  routing_description?: string | null;
+};
 
 /** routing_logs.routing_action value for Mayor structure-command gate. */
 export function mayorRoutingLogAction(decision: MayorRoutingDecision): string {
-  if (
-    decision.matchedBy === "structure_command" ||
-    decision.matchedBy === "structure_command_llm"
-  ) {
+  if (decision.matchedBy === "structure_command") {
     return "structure_delegate";
   }
   return decision.action;
 }
 
 async function delegateToTechDepartment(
-  matchedBy: "structure_command" | "structure_command_llm",
   reasoning: string,
   trace: string[],
 ): Promise<MayorRoutingDecision> {
-  const mainChamber = await resolveMainChamber(TECH_DEPARTMENT_BUILDING_ID);
+  const officeId = await requireExternalEntryOfficeId();
+  const techBuildingId = await requireTechDepartmentBuildingId(officeId);
+  const mainChamber = await resolveMainChamber(techBuildingId);
   return {
     action: "delegate",
-    target: TECH_DEPARTMENT_BUILDING_ID,
-    matchedBy,
+    target: techBuildingId,
+    matchedBy: "structure_command",
     confidence: 1,
     reasoning,
     trace,
-    delegatedBuildingId: TECH_DEPARTMENT_BUILDING_ID,
+    delegatedBuildingId: techBuildingId,
     delegatedChamberId: mainChamber?.chamberRegistryId ?? null,
   };
 }
 
 /**
- * Resolve routing decision for Mayor given the user's task text.
- * Uses a cheap LLM (Groq or Gemini) to pick a building.
- * Returns a concrete MayorRoutingDecision object.
+ * MR-2: sole deterministic bypass — keyword structure mutation commands only.
+ * Returns null when the configured Mayor agent must decide.
  */
-export async function resolveRoutingDecision(
+export async function resolveDeterministicMayorRoutingDecision(
   taskText: string,
-  buildings: Array<{ id: string; name: string; routing_description?: string | null }>,
-): Promise<MayorRoutingDecision> {
-  // If there are no buildings, answer self.
+  buildings: MayorBuildingRow[],
+): Promise<MayorRoutingDecision | null> {
   if (!buildings || buildings.length === 0) {
     return {
       action: "answer_self",
@@ -56,112 +65,129 @@ export async function resolveRoutingDecision(
 
   if (isStructureMutationCommand(taskText)) {
     return delegateToTechDepartment(
-      "structure_command",
-      "Structure mutation command detected before semantic routing — delegate to Tech Department",
+      "Structure mutation command detected by deterministic system gate — delegate to Tech Department",
       ["structure_command_gate", "tech_department"],
     );
   }
 
-  if (await isStructureMutationCommandSemantic(taskText)) {
-    return delegateToTechDepartment(
-      "structure_command_llm",
-      "Structure mutation command detected by LLM semantic gate — delegate to Tech Department",
-      ["structure_command_llm_gate", "tech_department"],
-    );
+  return null;
+}
+
+function extractJsonObject(rawText: string): unknown {
+  const trimmed = rawText.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced?.[1] ?? trimmed).trim();
+  const jsonMatch = candidate.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error("No JSON object found in Mayor response");
   }
+  return JSON.parse(jsonMatch[0]);
+}
 
-  const buildingList = buildings
-    .map((b) => `- ID: ${b.id}, Name: ${b.name}, Description: ${b.routing_description ?? "No description"}`)
-    .join("\n");
-  const prompt = `${MAYOR_ROUTING_PROMPT_PREFIX}
+function routingFieldsFromParsed(parsed: Record<string, unknown>): MayorRoutingDecision {
+  const routingRaw =
+    parsed.routing && typeof parsed.routing === "object"
+      ? (parsed.routing as Record<string, unknown>)
+      : parsed;
 
-- action: "answer_self" or "delegate"
-- target (optional): the building ID if delegating
-- matchedBy: "explicit_name" if the user explicitly mentioned the building name, otherwise "semantic"
-- confidence: number between 0 and 1
-- reasoning: short human readable explanation
-- trace: array of strings describing steps taken (for debugging)
+  const action = routingRaw.action === "delegate" ? "delegate" : "answer_self";
+  const target =
+    typeof routingRaw.target === "string" && routingRaw.target.trim()
+      ? routingRaw.target.trim()
+      : undefined;
+  const matchedBy =
+    routingRaw.matchedBy === "explicit_name" ? "explicit_name" : "semantic";
+  const confidence =
+    typeof routingRaw.confidence === "number" ? routingRaw.confidence : 0;
+  const reasoning =
+    typeof routingRaw.reasoning === "string" ? routingRaw.reasoning : "";
+  const trace = Array.isArray(routingRaw.trace)
+    ? routingRaw.trace.map(String)
+    : ["mayor_agent"];
 
-Available buildings:\n${buildingList}\n\nUser request: \"${taskText}\"\n\nRespond with JSON only.`;
+  return {
+    action,
+    target,
+    matchedBy,
+    confidence,
+    reasoning,
+    trace,
+  };
+}
 
-  let responseText = "";
-  if (process.env.GROQ_API_KEY) {
-    const apiKey = process.env.GROQ_API_KEY;
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        response_format: { type: "json_object" },
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.1,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error?.message || `Groq API returned status ${response.status}`);
-    }
-    responseText = data.choices?.[0]?.message?.content || "";
-  } else if (process.env.GOOGLE_API_KEY) {
-    const apiKey = process.env.GOOGLE_API_KEY;
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
-    );
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error?.message || `Gemini API returned status ${response.status}`);
-    }
-    responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  } else {
-    throw new Error("No cheap LLM API key configured for routing decision");
-  }
+function answerFromParsed(parsed: Record<string, unknown>): string | null {
+  if (!("answer" in parsed)) return null;
+  const answer = parsed.answer;
+  if (answer === null || answer === undefined) return null;
+  if (typeof answer === "string") return answer.trim() || null;
+  return String(answer).trim() || null;
+}
 
+/** Parse routing + optional answer from the configured Mayor agent's single response. */
+export function parseMayorAgentRoutingEnvelope(
+  rawText: string,
+  buildings: MayorBuildingRow[],
+): MayorAgentRoutingEnvelope {
   try {
-    const jsonMatch = responseText.trim().match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error("No JSON found in response");
-    }
-    const parsed = JSON.parse(jsonMatch[0]);
-    const decision: MayorRoutingDecision = {
-      action: parsed.action === "delegate" ? "delegate" : "answer_self",
-      target: parsed.target || undefined,
-      matchedBy: parsed.matchedBy === "explicit_name" ? "explicit_name" : "semantic",
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
-      reasoning: parsed.reasoning || "",
-      trace: Array.isArray(parsed.trace) ? parsed.trace.map(String) : [],
-    };
-    if (decision.action === "delegate" && (!decision.target || decision.confidence < 0.4)) {
-      return {
+    const parsed = extractJsonObject(rawText) as Record<string, unknown>;
+    const decision = routingFieldsFromParsed(parsed);
+    const answer = answerFromParsed(parsed);
+    return { decision, answer };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      decision: {
         action: "answer_self",
-        matchedBy: decision.matchedBy,
-        confidence: decision.confidence,
-        reasoning: "Low confidence or missing target – fallback to self",
-        trace: [...decision.trace, "fallback_low_confidence"],
-      };
-    }
-    if (decision.action === "delegate" && decision.target) {
-      const mainChamber = await resolveMainChamber(decision.target);
-      decision.delegatedBuildingId = decision.target;
-      decision.delegatedChamberId = mainChamber?.chamberRegistryId ?? null;
-    }
+        matchedBy: "semantic",
+        confidence: 0,
+        reasoning: `Failed to parse Mayor routing envelope: ${message}`,
+        trace: ["parse_error"],
+      },
+      answer: MAYOR_ROUTING_PARSE_ERROR_ANSWER,
+    };
+  }
+}
+
+/** Apply confidence/target validation and resolve delegate chamber ids. */
+export async function finalizeMayorRoutingDecision(
+  decision: MayorRoutingDecision,
+  validBuildingIds: Set<string>,
+): Promise<MayorRoutingDecision> {
+  if (decision.action !== "delegate" || !decision.target) {
     return decision;
-  } catch (e) {
+  }
+
+  if (!validBuildingIds.has(decision.target) || decision.confidence < 0.4) {
     return {
       action: "answer_self",
-      matchedBy: "semantic",
-      confidence: 0,
-      reasoning: `Failed to parse LLM response: ${e instanceof Error ? e.message : String(e)}`,
-      trace: ["parse_error"],
+      matchedBy: decision.matchedBy,
+      confidence: decision.confidence,
+      reasoning:
+        decision.confidence < 0.4
+          ? "Low confidence delegate target — Mayor answers directly"
+          : "Invalid or unknown building target — Mayor answers directly",
+      trace: [...decision.trace, "fallback_invalid_or_low_confidence"],
     };
   }
+
+  const mainChamber = await resolveMainChamber(decision.target);
+  return {
+    ...decision,
+    delegatedBuildingId: decision.target,
+    delegatedChamberId: mainChamber?.chamberRegistryId ?? null,
+  };
+}
+
+/**
+ * @deprecated MR-2: returns deterministic gate only. Semantic routing is decided by the Mayor agent.
+ */
+export async function resolveRoutingDecision(
+  taskText: string,
+  buildings: MayorBuildingRow[],
+): Promise<MayorRoutingDecision> {
+  const deterministic = await resolveDeterministicMayorRoutingDecision(taskText, buildings);
+  if (deterministic) return deterministic;
+  throw new Error(
+    "resolveRoutingDecision: non-deterministic Mayor routing requires the configured Mayor agent (MR-2)",
+  );
 }

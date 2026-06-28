@@ -17,7 +17,12 @@ import { updateRoutingLogAgentCount, logMayorRoutingDecision } from "./routing";
 import { getSupabaseAdmin } from "./supabase/admin";
 import type { RouteDecision } from "./office-types";
 import { processTask } from "./workflow-orchestrator";
-import { resolveRoutingDecision, mayorRoutingLogAction } from "./mayor-routing";
+import {
+  finalizeMayorRoutingDecision,
+  mayorRoutingLogAction,
+  parseMayorAgentRoutingEnvelope,
+  resolveDeterministicMayorRoutingDecision,
+} from "./mayor-routing";
 import { resolveManagerRoutingDecision } from "./manager-routing";
 import { resolveMainChamber } from "./workspace/resolve-main-chamber";
 import {
@@ -25,10 +30,24 @@ import {
   resolveBuildingRegistryIdForChamber,
 } from "./workspace/building-internal-chambers";
 import { isMainChamber } from "./workspace/is-main-chamber";
-import { MAYOR_ANSWER_SYSTEM_PREFIX } from "./mayor-persona";
+import {
+  buildMayorExecutiveSystemPrompt,
+  MAYOR_INVOKE_UNAVAILABLE_ANSWER,
+  MAYOR_ROUTING_MISSING_ANSWER,
+} from "./mayor-persona";
 import { buildManagerSummaryPrompt } from "./agent-persona";
-import { TECH_DEPARTMENT_BUILDING_ID } from "./workspace/tech-department";
+import { isMayorAgent as isMayorAgentByGraph } from "./workspace/graph-identity";
+import {
+  requireExternalEntryOfficeId,
+  requireTechDepartmentBuildingId,
+  requireTechDepartmentMainChamberRegistryId,
+} from "./workspace/graph-identity-required";
 import { classifyTechDepartmentIntent } from "./tech-department/intent";
+import {
+  buildCodeAuditSnapshot,
+  formatCodeAuditSnapshotForPrompt,
+  TECH_DEPARTMENT_CODE_AUDIT_ANSWER_PREFIX,
+} from "./tech-department/code-audit-context";
 import {
   buildTechDepartmentDiagnosticContext,
   TECH_DEPARTMENT_DIAGNOSTIC_ANSWER_PREFIX,
@@ -642,51 +661,6 @@ async function callCheapLLM(prompt: string): Promise<string> {
   }
 }
 
-async function isMayorAgent(agentId: string): Promise<boolean> {
-  const supabase = getSupabaseAdmin();
-  
-  const { data: chambersManaged } = await supabase
-    .from("chambers")
-    .select("building_object_id")
-    .eq("manager_agent_id", agentId);
-    
-  const { data: assignments } = await supabase
-    .from("agent_assignments")
-    .select("chamber_id")
-    .eq("agent_id", agentId);
-    
-  const chamberIds = assignments?.map(a => a.chamber_id) || [];
-  
-  const buildingIds = new Set<string>();
-  if (chambersManaged) {
-    chambersManaged.forEach(c => {
-      if (c.building_object_id) buildingIds.add(c.building_object_id);
-    });
-  }
-  
-  if (chamberIds.length > 0) {
-    const { data: chambersAssigned } = await supabase
-      .from("chambers")
-      .select("building_object_id")
-      .in("id", chamberIds);
-    chambersAssigned?.forEach(c => {
-      if (c.building_object_id) buildingIds.add(c.building_object_id);
-    });
-  }
-  
-  if (buildingIds.size > 0) {
-    const { data: buildings } = await supabase
-      .from("office_objects")
-      .select("label")
-      .in("id", Array.from(buildingIds));
-    if (buildings?.some(b => b.label?.trim() === "City Hall")) {
-      return true;
-    }
-  }
-  
-  return false;
-}
-
 async function resolveManagerEntry(
   sourceEntityId?: string,
   directTargetEntityId?: string,
@@ -901,7 +875,10 @@ async function executeTechDepartmentTask(
 ): Promise<ExecuteChatTaskResult> {
   const supabase = getSupabaseAdmin();
   const executionMode = options?.executionMode ?? "fast";
-  const mainChamber = await resolveMainChamber(TECH_DEPARTMENT_BUILDING_ID);
+  const officeId = await requireExternalEntryOfficeId();
+  const techBuildingId = await requireTechDepartmentBuildingId(officeId);
+  await requireTechDepartmentMainChamberRegistryId(officeId);
+  const mainChamber = await resolveMainChamber(techBuildingId);
 
   if (!mainChamber) {
     throw new Error("Main chamber Технического отдела не найден");
@@ -925,7 +902,7 @@ async function executeTechDepartmentTask(
         routing_action: "structure_plan",
         routing_reasoning: "Tech Department structure plan pending confirmation",
         routing_trace: ["tech_department", "structure", "pending_confirmation"],
-        delegated_building_id: TECH_DEPARTMENT_BUILDING_ID,
+        delegated_building_id: techBuildingId,
         delegated_chamber_id: mainChamber.chamberRegistryId,
       })
       .select("id")
@@ -963,6 +940,118 @@ async function executeTechDepartmentTask(
     throw new Error("Не найден агент Технического отдела");
   }
 
+  if (intent === "code_audit") {
+    const snapshot = await buildCodeAuditSnapshot(taskText);
+    const authError = snapshot.githubErrors.find((error) => error.kind === "auth");
+    if (authError) {
+      const answer = `Code Audit остановлен: ${authError.message}. Исходный код не был загружен — проверьте GITHUB_TOKEN и GITHUB_REPO.`;
+
+      const { data: logRow } = await supabase
+        .from("routing_logs")
+        .insert({
+          task_text: taskText,
+          chosen_target_entity_registry_id: mainChamber.chamberRegistryId,
+          all_candidates: [],
+          method: "tech-code-audit",
+          agent_count: 0,
+          outcome: "unrated",
+          routing_action: "code_audit",
+          routing_reasoning: "Tech Department code audit blocked — GitHub auth failure",
+          routing_trace: ["tech_department", "code_audit", "github_auth_error"],
+          delegated_building_id: techBuildingId,
+          delegated_chamber_id: mainChamber.chamberRegistryId,
+        })
+        .select("id")
+        .single();
+
+      return {
+        mode: "single",
+        executionMode,
+        answer,
+        routing: {
+          targets: [
+            {
+              entityRegistryId: mainChamber.chamberRegistryId,
+              confidence: 1,
+              reason: "tech_code_audit",
+            },
+          ],
+          method: "tech-code-audit",
+          agentCount: 0,
+          routingLogId: logRow?.id,
+        },
+        targetName: "Технический отдел",
+        agentName: null,
+        agentId: null,
+      };
+    }
+
+    const codeAuditSnapshot = formatCodeAuditSnapshotForPrompt(taskText, snapshot);
+    const systemPromptPrefix = `${TECH_DEPARTMENT_CODE_AUDIT_ANSWER_PREFIX}\n\n${codeAuditSnapshot}`;
+
+    const invoked = await invokeChamberAgentWithFreeFallback({
+      chamberRegistryId: mainChamber.chamberRegistryId,
+      question: taskText,
+      primaryAgent: selectedAgent,
+      systemPromptPrefix,
+    });
+
+    const { data: logRow } = await supabase
+      .from("routing_logs")
+      .insert({
+        task_text: taskText,
+        chosen_target_entity_registry_id: mainChamber.chamberRegistryId,
+        all_candidates: [],
+        method: "tech-code-audit",
+        agent_count: 1,
+        outcome: "unrated",
+        routing_action: "code_audit",
+        routing_reasoning: "Tech Department code audit read-only (GitHub)",
+        routing_trace: ["tech_department", "code_audit"],
+        delegated_building_id: techBuildingId,
+        delegated_chamber_id: mainChamber.chamberRegistryId,
+      })
+      .select("id")
+      .single();
+
+    const { data: agentRow } = await supabase
+      .from("agents")
+      .select("name")
+      .eq("id", selectedAgent.agentId)
+      .maybeSingle();
+
+    await archiveChamberAnswer({
+      entityRegistryId: mainChamber.chamberRegistryId,
+      taskText,
+      answer: invoked.answer,
+      agentName: agentRow?.name ?? selectedAgent.slug,
+      chamberName: "Технический отдел",
+      fallbackUsed: invoked.governmentFallback,
+    });
+
+    return {
+      mode: "single",
+      executionMode,
+      answer: invoked.answer,
+      routing: {
+        targets: [
+          {
+            entityRegistryId: mainChamber.chamberRegistryId,
+            confidence: 1,
+            reason: "tech_code_audit",
+          },
+        ],
+        method: "tech-code-audit",
+        agentCount: 1,
+        routingLogId: logRow?.id,
+      },
+      targetName: "Технический отдел",
+      agentName: agentRow?.name ?? selectedAgent.slug,
+      agentId: selectedAgent.agentId,
+      governmentFallback: invoked.governmentFallback,
+    };
+  }
+
   const diagnosticSnapshot = await buildTechDepartmentDiagnosticContext(taskText);
   const systemPromptPrefix = `${TECH_DEPARTMENT_DIAGNOSTIC_ANSWER_PREFIX}\n\n${diagnosticSnapshot}`;
 
@@ -985,7 +1074,7 @@ async function executeTechDepartmentTask(
       routing_action: "diagnose",
       routing_reasoning: "Tech Department diagnostic read-only",
       routing_trace: ["tech_department", "diagnose"],
-      delegated_building_id: TECH_DEPARTMENT_BUILDING_ID,
+      delegated_building_id: techBuildingId,
       delegated_chamber_id: mainChamber.chamberRegistryId,
     })
     .select("id")
@@ -1031,7 +1120,12 @@ async function executeMayorTask(
   taskText: string,
   mayorAgentId: string,
   mayorChamberRegistryId: string,
-  options?: { turbo?: boolean; executionMode?: ExecutionMode; forceFailSlugs?: string[] },
+  options?: {
+    turbo?: boolean;
+    executionMode?: ExecutionMode;
+    forceFailSlugs?: string[];
+    forceMayorInvokeError?: boolean;
+  },
 ): Promise<ExecuteChatTaskResult> {
   const supabase = getSupabaseAdmin();
 
@@ -1040,12 +1134,79 @@ async function executeMayorTask(
     .select("id, name, routing_description")
     .eq("entity_type", "building");
 
-  const decision = await resolveRoutingDecision(taskText, buildings || []);
+  const buildingRows = buildings || [];
+  const validBuildingIds = new Set(buildingRows.map((b) => b.id));
 
-  if (
-    decision.matchedBy === "structure_command" ||
-    decision.matchedBy === "structure_command_llm"
-  ) {
+  let decision = await resolveDeterministicMayorRoutingDecision(taskText, buildingRows);
+  let mayorAnswer: string | null = null;
+  let governmentFallback = false;
+  let mayorAgentName: string | null = null;
+  let mayorAgentSlug: string | null = null;
+
+  if (!decision) {
+    const [{ data: agentReg }, { data: agentRow }] = await Promise.all([
+      supabase.from("entity_registry").select("slug, name").eq("id", mayorAgentId).maybeSingle(),
+      supabase.from("agents").select("name").eq("id", mayorAgentId).maybeSingle(),
+    ]);
+
+    if (!agentReg?.slug) {
+      throw new Error("Агент Мэра не найден — проверьте назначение агента в главной палате City Hall.");
+    }
+
+    mayorAgentName = agentRow?.name ?? agentReg.name ?? agentReg.slug;
+    mayorAgentSlug = agentReg.slug;
+
+    try {
+      const invoked = await invokeChamberAgentWithFreeFallback({
+        chamberRegistryId: mayorChamberRegistryId,
+        question: taskText,
+        primaryAgent: {
+          agentId: mayorAgentId,
+          slug: agentReg.slug,
+          registryId: mayorAgentId,
+          costTier: "mid",
+        },
+        systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows),
+        forceError: options?.forceMayorInvokeError,
+      });
+
+      governmentFallback = invoked.governmentFallback;
+      const parsed = parseMayorAgentRoutingEnvelope(invoked.answer, buildingRows);
+      decision = await finalizeMayorRoutingDecision(parsed.decision, validBuildingIds);
+      mayorAnswer = parsed.answer;
+    } catch (err) {
+      const internalMessage = err instanceof Error ? err.message : String(err);
+      console.warn("[executeMayorTask] Mayor invoke failed:", internalMessage);
+
+      const { data: chamberRow } = await supabase
+        .from("entity_registry")
+        .select("name")
+        .eq("id", mayorChamberRegistryId)
+        .maybeSingle();
+
+      return {
+        mode: "single",
+        executionMode: options?.executionMode ?? "fast",
+        answer: MAYOR_INVOKE_UNAVAILABLE_ANSWER,
+        routing: {
+          targets: [
+            {
+              entityRegistryId: mayorChamberRegistryId,
+              confidence: 0,
+              reason: "mayor_invoke_unavailable",
+            },
+          ],
+          method: "llm-cheap",
+          agentCount: 0,
+        },
+        targetName: chamberRow?.name ?? null,
+        agentName: mayorAgentName,
+        agentId: mayorAgentId,
+      };
+    }
+  }
+
+  if (decision.matchedBy === "structure_command") {
     await supabase.from("routing_logs").insert({
       task_text: taskText,
       chosen_target_entity_registry_id: decision.delegatedChamberId ?? decision.target ?? null,
@@ -1064,7 +1225,9 @@ async function executeMayorTask(
   }
 
   if (decision.action === "delegate" && decision.target) {
-    if (decision.target === TECH_DEPARTMENT_BUILDING_ID) {
+    const officeId = await requireExternalEntryOfficeId();
+    const techBuildingId = await requireTechDepartmentBuildingId(officeId);
+    if (decision.target === techBuildingId) {
       return executeTechDepartmentTask(taskText, {
         turbo: options?.turbo,
         executionMode: options?.executionMode,
@@ -1085,21 +1248,13 @@ async function executeMayorTask(
     supabase.from("entity_registry").select("name").eq("id", mayorChamberRegistryId).maybeSingle(),
   ]);
 
-  if (!agentReg?.slug) {
-    throw new Error("Агент не найден");
+  if (!agentReg?.slug && !mayorAgentSlug) {
+    throw new Error("Агент Мэра не найден — проверьте назначение агента в главной палате City Hall.");
   }
 
-  const invoked = await invokeChamberAgentWithFreeFallback({
-    chamberRegistryId: mayorChamberRegistryId,
-    question: taskText,
-    primaryAgent: {
-      agentId: mayorAgentId,
-      slug: agentReg.slug,
-      registryId: mayorAgentId,
-      costTier: "mid",
-    },
-    systemPromptPrefix: MAYOR_ANSWER_SYSTEM_PREFIX,
-  });
+  const answer =
+    mayorAnswer?.trim() ||
+    MAYOR_ROUTING_MISSING_ANSWER;
 
   const { data: logRow } = await supabase
     .from("routing_logs")
@@ -1108,7 +1263,7 @@ async function executeMayorTask(
       chosen_target_entity_registry_id: mayorChamberRegistryId,
       all_candidates: [],
       method: "llm-cheap",
-      agent_count: 0,
+      agent_count: mayorAgentSlug ? 1 : 0,
       outcome: "unrated",
       routing_action: mayorRoutingLogAction(decision),
       routing_matched_by: decision.matchedBy,
@@ -1125,35 +1280,41 @@ async function executeMayorTask(
       decision,
       mayorAgentId,
       null,
-      false
+      false,
     );
   }
 
   const routeDecision: RouteDecision = {
-    targets: [{ entityRegistryId: mayorChamberRegistryId, confidence: 1, reason: "answer_self" }],
+    targets: [
+      {
+        entityRegistryId: mayorChamberRegistryId,
+        confidence: decision.confidence || 1,
+        reason: decision.reasoning || "answer_self",
+      },
+    ],
     method: "llm-cheap",
-    agentCount: 0,
+    agentCount: mayorAgentSlug ? 1 : 0,
     routingLogId: logRow?.id,
   };
 
   await archiveChamberAnswer({
     entityRegistryId: mayorChamberRegistryId,
     taskText,
-    answer: invoked.answer,
-    agentName: agentRow?.name ?? agentReg.name ?? agentReg.slug,
+    answer,
+    agentName: mayorAgentName ?? agentRow?.name ?? agentReg?.name ?? agentReg?.slug ?? null,
     chamberName: chamberRow?.name ?? null,
-    fallbackUsed: invoked.governmentFallback,
+    fallbackUsed: governmentFallback,
   });
 
   return {
     mode: "single",
-    executionMode: "fast",
-    answer: invoked.answer,
+    executionMode: options?.executionMode ?? "fast",
+    answer,
     routing: routeDecision,
     targetName: chamberRow?.name ?? null,
-    agentName: agentRow?.name ?? agentReg.name ?? agentReg.slug,
+    agentName: mayorAgentName ?? agentRow?.name ?? agentReg?.name ?? agentReg?.slug ?? null,
     agentId: mayorAgentId,
-    governmentFallback: invoked.governmentFallback,
+    governmentFallback,
   };
 }
 
@@ -1194,6 +1355,8 @@ export async function executeChatTask(
     directTargetEntityId?: string;
     turbo?: boolean;
     attachmentIds?: string[];
+    /** Non-production verify only — simulates Mayor invoke failure. */
+    forceMayorInvokeError?: boolean;
   },
 ): Promise<ExecuteChatTaskResult> {
   if (executionMode !== undefined && !isExecutionMode(executionMode)) {
@@ -1209,13 +1372,17 @@ export async function executeChatTask(
   if (options?.targetAgentId) {
     const chamberId =
       options.directTargetEntityId ?? sourceEntityId ?? GENERAL_INTAKE_ID;
-    const isMayor = await isMayorAgent(options.targetAgentId);
+    const officeId = await requireExternalEntryOfficeId();
+    const mayorResult = await isMayorAgentByGraph(options.targetAgentId, officeId);
+    const isMayor = mayorResult?.value === true;
     if (isMayor) {
       return finish(
         await executeMayorTask(workingTaskText, options.targetAgentId, chamberId, {
           turbo: options?.turbo,
           executionMode: resolvedExecutionMode,
           forceFailSlugs: options?.forceFailSlugs,
+          forceMayorInvokeError:
+            process.env.NODE_ENV !== "production" ? options?.forceMayorInvokeError : undefined,
         }),
       );
     }
@@ -1229,6 +1396,19 @@ export async function executeChatTask(
     resolvedExecutionMode,
   );
   if (managerEntry) {
+    const officeId = await requireExternalEntryOfficeId();
+    if (sourceEntityId) {
+      const techMainChamberId = await requireTechDepartmentMainChamberRegistryId(officeId);
+      if (sourceEntityId === techMainChamberId) {
+        return finish(
+          await executeTechDepartmentTask(workingTaskText, {
+            turbo: options?.turbo,
+            executionMode: resolvedExecutionMode,
+            forceFailSlugs: options?.forceFailSlugs,
+          }),
+        );
+      }
+    }
     return finish(
       await executeManagerTask(workingTaskText, managerEntry.buildingId, {
         turbo: options?.turbo,

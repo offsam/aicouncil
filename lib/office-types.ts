@@ -318,8 +318,7 @@ export type ManagerRoutingDecision = {
 };
 
 /**
- * Formal contract returned by resolveRoutingDecision().
- * Describes what Mayor decided to do and why.
+ * Formal contract for Mayor routing decisions (MR-2: configured Mayor agent or deterministic structure gate).
  */
 export type MayorRoutingDecision = {
   /** Whether Mayor handles the task itself or delegates to another building. */
@@ -334,8 +333,8 @@ export type MayorRoutingDecision = {
    * How the target was identified:
    * - 'explicit_name': user named the building/project directly
    * - 'semantic': Mayor inferred from task context, no explicit name
-   * - 'structure_command': structure mutation keywords before LLM routing
-   * - 'structure_command_llm': lightweight LLM yes/no after keyword gate miss
+   * - 'structure_command': deterministic keyword gate (admin/system mutation commands)
+   * - 'structure_command_llm': legacy log value only (removed in MR-2)
    */
   matchedBy: "explicit_name" | "semantic" | "structure_command" | "structure_command_llm";
   /** Confidence 0-1 */

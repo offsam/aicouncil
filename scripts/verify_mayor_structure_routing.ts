@@ -1,9 +1,9 @@
 /**
- * Verify Mayor structure-command gate + semantic routing cases.
+ * Verify Mayor deterministic structure gate (MR-2).
  */
 import * as fs from "fs";
 import { createClient } from "@supabase/supabase-js";
-import { resolveRoutingDecision } from "../lib/mayor-routing";
+import { resolveDeterministicMayorRoutingDecision } from "../lib/mayor-routing";
 import { isStructureMutationCommand } from "../lib/structure-command-intent";
 import { TECH_DEPARTMENT_BUILDING_ID } from "../lib/workspace/tech-department";
 
@@ -28,17 +28,17 @@ const CASES = [
   {
     name: "почему не работает роутинг",
     text: "почему не работает роутинг в Citizly",
-    expect: "not_tech" as const,
+    expect: "mayor_decides" as const,
   },
   {
     name: "какая дата суда",
     text: "какая дата суда",
-    expect: "lawyers" as const,
+    expect: "mayor_decides" as const,
   },
   {
-    name: "сленг без keyword-gate (запилить секцию)",
+    name: "сленг без keyword-gate (Mayor decides under MR-2)",
     text: "запилить секцию для видео в city с двумя ботами",
-    expect: "tech_llm" as const,
+    expect: "mayor_decides" as const,
   },
 ];
 
@@ -59,47 +59,29 @@ async function main() {
     .select("id, name, routing_description")
     .eq("entity_type", "building");
 
-  const lawyers = (buildings ?? []).find((b) => b.id === LAWYERS_BUILDING_ID);
-  if (!lawyers) {
-    console.warn("Warning: ЮРИСТЫ building not found in DB, lawyers case may fail");
-  }
-
-  console.log("=== Mayor structure routing verification ===\n");
+  console.log("=== Mayor deterministic structure gate (MR-2) ===\n");
 
   let passed = 0;
   for (const testCase of CASES) {
     const structureGate = isStructureMutationCommand(testCase.text);
-    const decision = await resolveRoutingDecision(testCase.text, buildings ?? []);
-    const routedTo = labelDecision(decision.target);
+    const decision = await resolveDeterministicMayorRoutingDecision(
+      testCase.text,
+      buildings ?? [],
+    );
 
     let ok = false;
-    const isStructureDelegate =
-      decision.matchedBy === "structure_command" ||
-      decision.matchedBy === "structure_command_llm";
-
     if (testCase.expect === "tech") {
       ok =
-        decision.matchedBy === "structure_command" &&
+        decision?.matchedBy === "structure_command" &&
         decision.target === TECH_DEPARTMENT_BUILDING_ID;
-    } else if (testCase.expect === "tech_llm") {
-      ok =
-        !structureGate &&
-        decision.matchedBy === "structure_command_llm" &&
-        decision.target === TECH_DEPARTMENT_BUILDING_ID;
-    } else if (testCase.expect === "not_tech") {
-      ok = !isStructureDelegate && decision.target !== TECH_DEPARTMENT_BUILDING_ID;
-    } else if (testCase.expect === "lawyers") {
-      ok =
-        !isStructureDelegate &&
-        decision.action === "delegate" &&
-        decision.target === LAWYERS_BUILDING_ID;
+    } else {
+      ok = decision === null;
     }
 
     console.log(`[${ok ? "PASS" : "FAIL"}] ${testCase.name}`);
     console.log(`  text: ${testCase.text.slice(0, 80)}${testCase.text.length > 80 ? "…" : ""}`);
     console.log(`  structure_gate: ${structureGate}`);
-    console.log(`  action: ${decision.action}, matchedBy: ${decision.matchedBy}`);
-    console.log(`  target: ${routedTo}`);
+    console.log(`  deterministic: ${decision ? `${decision.action}/${decision.matchedBy} → ${labelDecision(decision.target)}` : "null (Mayor agent decides)"}`);
     console.log(`  expected: ${testCase.expect}`);
     console.log("");
 
