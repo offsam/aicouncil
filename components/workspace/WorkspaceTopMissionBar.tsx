@@ -11,6 +11,8 @@ import { useWorkspaceLocale } from "./WorkspaceLocaleContext";
 import { useWorkspaceRoute } from "./WorkspaceRouteContext";
 import { useWorkspaceSelection } from "./WorkspaceSelectionContext";
 import { useWorkspaceChat } from "./WorkspaceChatContext";
+import type { CostTier } from "@/lib/cost-tier";
+import { mayorExecutionEligibility } from "@/lib/workspace/mayor-execution-eligibility";
 import type { WorkspaceLocale } from "@/lib/workspace/i18n/messages";
 import { WORKSPACE_MESSAGES } from "@/lib/workspace/i18n/messages";
 
@@ -77,6 +79,11 @@ export function WorkspaceTopMissionBar() {
   const [activeTasks, setActiveTasks] = useState(0);
   const [adminOpen, setAdminOpen] = useState(false);
   const adminRef = useRef<HTMLDivElement>(null);
+  const [mayorTierCounts, setMayorTierCounts] = useState<Record<CostTier, number> | null>(
+    null,
+  );
+
+  const mayorEligibility = mayorExecutionEligibility(mayorTierCounts);
 
   const officeId = snapshot?.officeId ?? null;
   const projectName = snapshot?.cityName ?? "AI Council";
@@ -98,6 +105,19 @@ export function WorkspaceTopMissionBar() {
     }
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/workspace/city-hall-orchestrator")
+      .then((r) => r.json())
+      .then((data: { tierCounts?: Record<CostTier, number> }) => {
+        if (!cancelled && data.tierCounts) setMayorTierCounts(data.tierCounts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -184,8 +204,10 @@ export function WorkspaceTopMissionBar() {
           <ExecutionModeSelector
             value={executionMode}
             onChange={setExecutionMode}
-            teamDisabled={false}
-            councilDisabled={false}
+            teamDisabled={!mayorEligibility.teamEligible}
+            councilDisabled={!mayorEligibility.councilEligible}
+            teamDisabledReason="Нет cheap-агентов в City Hall"
+            councilDisabledReason="Нет mid-агентов в City Hall"
             layout="toolbar"
             compact
           />

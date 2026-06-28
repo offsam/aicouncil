@@ -18,6 +18,7 @@ import { KNOWLEDGE_FILE_ACCEPT } from "@/lib/knowledge/prepare-knowledge-file";
 import { classifyKnowledgeFile } from "@/lib/knowledge/knowledge-media-types";
 import { ChatMessageAttachments } from "./ChatMessageAttachments";
 import { DebateTierPicker } from "./DebateTierPicker";
+import { mayorExecutionEligibility } from "@/lib/workspace/mayor-execution-eligibility";
 import { useWorkspaceExecutionMode } from "./WorkspaceExecutionModeContext";
 import { useWorkspaceRoute } from "./WorkspaceRouteContext";
 import { useWorkspaceSelection } from "./WorkspaceSelectionContext";
@@ -303,13 +304,19 @@ export function WorkspaceMayorChat() {
     }
   }, [dockOpen, messages.length, setExpanded]);
 
-  const teamDisabled = !teamRosterEligible;
-  const councilDisabled = !councilRosterEligible;
+  const mayorEligibility =
+    target.kind === "mayor" ? mayorExecutionEligibility(debateTierCounts) : null;
+  const teamDisabled = mayorEligibility
+    ? !mayorEligibility.teamEligible
+    : !teamRosterEligible;
+  const councilDisabled = mayorEligibility
+    ? !mayorEligibility.councilEligible
+    : !councilRosterEligible;
 
   useEffect(() => {
     if (teamDisabled && executionMode === "team") setExecutionMode("fast");
     if (councilDisabled && executionMode === "council") setExecutionMode("fast");
-  }, [teamDisabled, councilDisabled, executionMode]);
+  }, [teamDisabled, councilDisabled, executionMode, setExecutionMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1180,19 +1187,25 @@ export function WorkspaceMayorChat() {
                   const disabled =
                     (option.id === "team" && teamDisabled) ||
                     (option.id === "council" && councilDisabled);
+                  const disabledReason =
+                    option.id === "team" && teamDisabled
+                      ? "Нет cheap-агентов в City Hall (отдел $)"
+                      : option.id === "council" && councilDisabled
+                        ? "Нет mid-агентов в City Hall (отдел $$)"
+                        : undefined;
                   return (
                     <button
                       key={option.id}
                       type="button"
                       role="radio"
                       aria-checked={executionMode === option.id}
-                      disabled={disabled || loading}
+                      disabled={disabled}
                       data-testid={`workspace-chat-mode-${option.id}`}
                       onClick={() => setExecutionMode(option.id)}
                       className={`workspace-chat-mode-switch__btn${
                         executionMode === option.id ? " workspace-chat-mode-switch__btn--active" : ""
                       }${disabled ? " workspace-chat-mode-switch__btn--disabled" : ""}`}
-                      title={disabled ? option.disabledReason ?? option.hint : option.hint}
+                      title={disabled ? disabledReason ?? option.hint : option.hint}
                     >
                       {option.label}
                     </button>
@@ -1215,7 +1228,13 @@ export function WorkspaceMayorChat() {
                   data-testid="workspace-debate-launch"
                   disabled={loading || debateLoading || !input.trim() || !debateReady}
                   onClick={handleDebateClick}
-                  title="Спор между двумя агентами Совета города"
+                  title={
+                    !input.trim()
+                      ? "Введите вопрос — затем выберите уровень спора"
+                      : !debateReady
+                        ? "Нет отделов спора в City Hall (нужно ≥2 агента в tier-отделе)"
+                        : "Спор между двумя агентами City Hall (free / $ / $$ / $$$)"
+                  }
                 >
                   Спор
                 </button>
