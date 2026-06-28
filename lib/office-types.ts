@@ -205,7 +205,7 @@ export type RoutingScoreDetail = {
 
 export type RouteDecision = {
   targets: RouteCandidate[];
-  method: 'rule-based' | 'llm-cheap' | 'llm-expensive' | 'fallback' | 'fallback-blocked' | 'tech-structure-plan';
+  method: 'rule-based' | 'llm-cheap' | 'llm-expensive' | 'fallback' | 'fallback-blocked' | 'tech-structure-plan' | 'tech-code-audit';
   agentCount: number;
   scoreDetail?: RoutingScoreDetail;
   routingLogId?: string;

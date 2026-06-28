@@ -35,7 +35,9 @@ function formatEntryDate(value?: string): string | null {
 function entryKindLabel(entry: KnowledgeEntry): string {
   if (entryIsMissingFileAttachment(entry)) return "Без файла";
   if (entryIsTextNote(entry)) return "Заметка";
-  const kind = knowledgeKindFromMime(parseDataUrlMime(entry.file_url));
+  const kind = knowledgeKindFromMime(
+    entry.file_url ? parseDataUrlMime(entry.file_url) : null,
+  );
   if (kind === "text") {
     const ext = entry.title.split(".").pop()?.toLowerCase();
     if (ext === "md" || ext === "markdown") return "Markdown";
