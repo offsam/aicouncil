@@ -31,6 +31,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import { ConnectionMode, SelectionMode } from "@xyflow/system";
 import { DEFAULT_BUILDING, DEFAULT_CHAMBER } from "@/lib/control-defaults";
+import { useWorkspaceExecutionMode } from "@/components/workspace/WorkspaceExecutionModeContext";
+import { isCostTierActiveForExecutionMode } from "@/lib/workspace/execution-mode-tiers";
+import { normalizeCostTier } from "@/lib/cost-tier";
 import type { AgentAssignmentRow, ChamberRow, ConnectionRoutePath, OfficeObjectRow } from "@/lib/office-types";
 import {
   buildAgentAssignmentNode,
@@ -425,6 +428,7 @@ export function WorkspaceCanvas({
   const cityNameRef = useRef("AI Council");
   const { activeRouteHighlight, registerRouteLookup, setRouteSourceEntityId, executionProgress } =
     useWorkspaceRoute();
+  const { executionMode } = useWorkspaceExecutionMode();
   const { setSelection, setSelectedTarget, registerSnapshot, registerActions, nameByRegistryId, selectedTargets, openInspector, closeInspector, inspectorOpen } =
     useWorkspaceSelection();
   const { t } = useWorkspaceLocale();
@@ -1144,6 +1148,31 @@ export function WorkspaceCanvas({
     setEdges,
     setNodes,
   ]);
+
+  useEffect(() => {
+    const showRoute =
+      executionProgress?.phase !== "error" &&
+      executionProgress?.phase !== "complete" &&
+      Boolean(activeRouteHighlight);
+    if (showRoute || loading) return;
+
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.type !== "agent") return n;
+        const data = n.data as AgentNodeData;
+        const eligible = isCostTierActiveForExecutionMode(data.costTier, executionMode);
+        if (data.executionTierEligible === eligible) return n;
+        return {
+          ...n,
+          data: {
+            ...data,
+            executionTierEligible: eligible,
+          },
+        };
+      }),
+    );
+  }, [executionMode, executionProgress?.phase, activeRouteHighlight, loading, setNodes]);
+
   useEffect(() => {
     if (connectSourceId) setRouteSourceEntityId(connectSourceId);
   }, [connectSourceId, setRouteSourceEntityId]);

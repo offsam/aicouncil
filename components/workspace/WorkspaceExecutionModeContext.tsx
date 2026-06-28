@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { ExecutionMode } from "@/lib/execution-mode";
 
 type WorkspaceExecutionModeContextValue = {
@@ -11,15 +18,35 @@ type WorkspaceExecutionModeContextValue = {
 const WorkspaceExecutionModeContext =
   createContext<WorkspaceExecutionModeContextValue | null>(null);
 
-export function WorkspaceExecutionModeProvider({ children }: { children: ReactNode }) {
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>("fast");
+export function WorkspaceExecutionModeProvider({
+  children,
+  officeId,
+  initialMode = "fast",
+}: {
+  children: ReactNode;
+  officeId: string;
+  initialMode?: ExecutionMode;
+}) {
+  const [executionMode, setExecutionModeState] = useState<ExecutionMode>(initialMode);
+
+  const setExecutionMode = useCallback(
+    (mode: ExecutionMode) => {
+      setExecutionModeState(mode);
+      void fetch(`/api/offices/${officeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_meta: { execution_mode: mode } }),
+      }).catch(() => {});
+    },
+    [officeId],
+  );
 
   const value = useMemo(
     () => ({
       executionMode,
       setExecutionMode,
     }),
-    [executionMode],
+    [executionMode, setExecutionMode],
   );
 
   return (

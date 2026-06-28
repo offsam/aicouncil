@@ -1638,6 +1638,15 @@ button:not(:disabled) {
   transition: none;
 }
 
+.workspace-node-shell--agent.workspace-agent-tier-active:not(.workspace-node-dimmed) {
+  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.35), 0 0 12px rgba(91, 141, 239, 0.18);
+}
+
+.workspace-node-shell--agent.workspace-agent-tier-active:not(.workspace-node-dimmed)
+  .workspace-agent-circle {
+  filter: saturate(1.08);
+}
+
 .workspace-node-hovered:not(.workspace-building-selected):not(.workspace-node-route-highlight).workspace-node-shell--building,
 .workspace-node-hovered:not(.workspace-building-selected):not(.workspace-node-route-highlight).workspace-node-shell--chamber {
   box-shadow: var(--ws-perimeter-shadow-hover, var(--ws-perimeter-shadow));

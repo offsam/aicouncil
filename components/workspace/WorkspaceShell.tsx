@@ -7,6 +7,7 @@ import { WorkspaceMayorChat } from "@/components/workspace/WorkspaceMayorChat";
 import { WorkspaceChatProvider } from "@/components/workspace/WorkspaceChatContext";
 import { WorkspaceInspector } from "@/components/workspace/WorkspaceInspector";
 import { WorkspaceLocaleProvider } from "@/components/workspace/WorkspaceLocaleContext";
+import type { ExecutionMode } from "@/lib/execution-mode";
 import { WorkspaceExecutionModeProvider } from "@/components/workspace/WorkspaceExecutionModeContext";
 import { WorkspaceRouteProvider } from "@/components/workspace/WorkspaceRouteContext";
 import { WorkspaceSelectionProvider } from "@/components/workspace/WorkspaceSelectionContext";
@@ -49,15 +50,20 @@ function WorkspaceLayout({
 export function WorkspaceShell({
   officeId,
   techDepartmentBuildingId,
+  initialExecutionMode = "fast",
 }: {
   officeId: string;
   techDepartmentBuildingId: string;
+  initialExecutionMode?: ExecutionMode;
 }) {
   return (
     <WorkspaceLocaleProvider>
       <WorkspaceSelectionProvider>
         <WorkspaceRouteProvider>
-          <WorkspaceExecutionModeProvider>
+          <WorkspaceExecutionModeProvider
+            officeId={officeId}
+            initialMode={initialExecutionMode}
+          >
             <WorkspaceAppearanceProvider>
               <WorkspaceChatProvider>
                 <WorkspaceLayout

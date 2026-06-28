@@ -122,6 +122,8 @@ export type AgentNodeData = {
   accentIndex?: number;
   /** Set when agent has its own palette color. */
   agentIconId?: AgentIconId | null;
+  /** True when agent cost tier is at or below the city-wide execution mode ceiling. */
+  executionTierEligible?: boolean;
 };
 
 export function parseWorkspaceMeta(raw: unknown): WorkspaceMeta {

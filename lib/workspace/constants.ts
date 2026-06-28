@@ -31,7 +31,13 @@ export type CityHallLayout = {
   height: number;
 };
 
+import type { ExecutionMode } from "@/lib/execution-mode";
+
 export type WorkspaceMeta = {
+  /** Headless-integration entry office (Telegram, etc.) — ADR-002 */
+  external_entry?: boolean;
+  /** City-wide Fast / Team / Council activator (defaults to fast = free tier only). */
+  execution_mode?: ExecutionMode;
   city_hall?: CityHallLayout;
   viewport?: { x: number; y: number; zoom: number };
   canvas_bg?: string;

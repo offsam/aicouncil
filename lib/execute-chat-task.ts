@@ -8,6 +8,7 @@ import { invokeChamberAgentWithFreeFallback } from "./chamber-agent-invoke";
 import { resolveChamberManagerAgentId } from "./chamber-manager";
 import { runConsensusAnalysis } from "./consensus";
 import { isExecutionMode, type ExecutionMode } from "./execution-mode";
+import { resolveOfficeExecutionMode } from "./workspace/execution-mode-tiers";
 import { executeParallelAgents } from "./execute-parallel-agents";
 import { invokeAgentForWorkflow } from "./invoke-agent";
 import { writeChamberArchiveEntry } from "./chamber-archive";
@@ -1404,7 +1405,9 @@ export async function executeChatTask(
     throw new Error(`Unsupported executionMode: ${String(executionMode)}`);
   }
 
-  const resolvedExecutionMode = executionMode ?? "fast";
+  const officeId = await requireExternalEntryOfficeId();
+  const resolvedExecutionMode =
+    executionMode ?? (await resolveOfficeExecutionMode(officeId));
   const originalTaskText = taskText.trim();
   const workingTaskText = await enrichChatTaskText(originalTaskText, options?.attachmentIds);
   const finish = async (result: ExecuteChatTaskResult) => {

@@ -87,6 +87,8 @@ function AgentNodeInner({ data, selected, parentId }: NodeProps) {
         ref={shellRef}
         data-testid={`workspace-agent-${d.assignmentId}`}
         className={`workspace-node-shell workspace-node-shell--agent workspace-node-shell--${statusTone} ${
+          d.executionTierEligible === false ? "workspace-node-dimmed" : ""
+        } ${d.executionTierEligible ? "workspace-agent-tier-active" : ""} ${
           d.dimmed ? "workspace-node-dimmed" : ""
         } ${d.routeFading ? "workspace-route-fading" : ""} ${
           d.connectSelected ? "workspace-agent-connect-selected" : ""
