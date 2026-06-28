@@ -119,3 +119,27 @@ export async function callGroqWithFallback(
     throw err;
   }
 }
+
+/**
+ * Invoke exactly one configured Groq model — no silent multi-model fallback pool.
+ * Used by agent workflow invocations (Workspace Runtime Transparency).
+ */
+export async function callGroqConfiguredModel(
+  model: string,
+  messages: GroqMessage[],
+  opts?: { maxTokens?: number },
+): Promise<{ answer: string; modelUsed: string }> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error("GROQ_API_KEY missing");
+  }
+
+  const maxTokens = opts?.maxTokens ?? 2048;
+  const result = await callGroqOnce(apiKey, model, messages, maxTokens);
+  if (!result.ok) {
+    recordProviderFailure("groq", model, result.error ?? "Groq failed");
+    throw new Error(result.error ?? `Groq error ${result.status}`);
+  }
+  recordProviderSuccess("groq", model, model);
+  return { answer: result.answer!, modelUsed: model };
+}

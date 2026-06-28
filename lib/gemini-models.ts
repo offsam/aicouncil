@@ -121,3 +121,32 @@ export async function callGeminiWithFallback(
     throw err;
   }
 }
+
+/** Invoke exactly one configured Gemini model — no silent fallback pool. */
+export async function callGeminiConfiguredModel(
+  model: string,
+  opts: {
+    parts: GeminiPart[];
+    systemPrompt?: string;
+    maxTokens?: number;
+  },
+): Promise<{ answer: string; modelUsed: string }> {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_API_KEY missing");
+
+  const body: GeminiRequestBody = {
+    contents: [{ parts: opts.parts }],
+    generationConfig: { maxOutputTokens: opts.maxTokens ?? 2048 },
+    ...(opts.systemPrompt
+      ? { systemInstruction: { parts: [{ text: opts.systemPrompt }] } }
+      : {}),
+  };
+
+  const result = await callGeminiOnce(apiKey, model, body);
+  if (!result.ok) {
+    recordProviderFailure("gemini", model, result.error ?? "Gemini failed");
+    throw new Error(result.error ?? `Gemini error ${result.status}`);
+  }
+  recordProviderSuccess("gemini", model, model);
+  return { answer: result.answer!, modelUsed: model };
+}

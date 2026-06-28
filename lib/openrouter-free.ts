@@ -181,3 +181,21 @@ export async function callOpenRouterWithFallback(
     throw err;
   }
 }
+
+/** Invoke exactly one configured OpenRouter model — no silent fallback pool. */
+export async function callOpenRouterConfiguredModel(
+  model: string,
+  messages: ChatMessage[],
+  opts?: { maxTokens?: number },
+): Promise<{ answer: string; modelUsed: string }> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
+
+  const result = await callOpenRouterOnce(apiKey, model, messages);
+  if (!result.ok) {
+    recordProviderFailure("openrouter", model, result.error ?? "OpenRouter failed");
+    throw new Error(result.error ?? `OpenRouter error ${result.status}`);
+  }
+  recordProviderSuccess("openrouter", model, model);
+  return { answer: result.answer!, modelUsed: model };
+}
