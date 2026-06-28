@@ -1,0 +1,1353 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ExecuteChatTaskResult } from "@/lib/execute-chat-task";
+import { EXECUTION_MODE_OPTIONS, type ExecutionMode } from "@/lib/execution-mode";
+import type { RouteDecision } from "@/lib/office-types";
+import type { RosterAgent } from "@/lib/workspace/execution-progress";
+import { deriveExecutionResultFromChatTask } from "@/lib/workspace/execution-result-status";
+import { formatRoutePath, formatWorkflowSidebar } from "@/lib/workspace/resolve-route-highlight";
+import { ChatExecutionProgress } from "./ChatExecutionProgress";
+import { ChatMessageDetails } from "./ChatMessageDetails";
+import { CouncilConfirmationGate } from "./CouncilConfirmationGate";
+import { TechStructureConfirmationGate } from "./TechStructureConfirmationGate";
+import type { TechStructurePlan } from "@/lib/tech-department/structure-types";
+import type { ChatAttachment } from "@/lib/chat/chat-attachment-types";
+import { uploadChatAttachmentsToLibrary } from "@/lib/chat/upload-chat-attachments";
+import { KNOWLEDGE_FILE_ACCEPT } from "@/lib/knowledge/prepare-knowledge-file";
+import { classifyKnowledgeFile } from "@/lib/knowledge/knowledge-media-types";
+import { ChatMessageAttachments } from "./ChatMessageAttachments";
+import { DebateTierPicker } from "./DebateTierPicker";
+import { useWorkspaceExecutionMode } from "./WorkspaceExecutionModeContext";
+import { useWorkspaceRoute } from "./WorkspaceRouteContext";
+import { useWorkspaceSelection } from "./WorkspaceSelectionContext";
+import { useWorkspaceChat } from "./WorkspaceChatContext";
+import {
+  chatTargetHint,
+  DEFAULT_MAYOR_CHAT_TARGET,
+  type WorkspaceChatTarget,
+  workspaceChatTargetKey,
+} from "@/lib/workspace/workspace-chat-target";
+import {
+  loadWorkspaceChatHistory,
+  saveWorkspaceChatHistory,
+  toStoredChatMessage,
+  type StoredChatMessage,
+} from "@/lib/workspace/workspace-chat-history";
+import type { CostTier } from "@/lib/cost-tier";
+import type { AgentDebateResult, DebateTierMode } from "@/lib/debate/types";
+import type { CityHallDebateChambersByTier } from "@/lib/workspace/resolve-city-hall-council-chamber";
+
+type CityHallOrchestrator = {
+  chamberRegistryId: string;
+  chamberName: string;
+  agentId: string;
+  agentName: string;
+};
+
+type ChatMessage = StoredChatMessage;
+
+const DEFAULT_CHAMBER_NAME = "Instagram";
+const CHAT_INPUT_MIN_PX = 40;
+const CHAT_INPUT_MAX_PX = 160;
+
+function resolveChatRosterEntityId(target: WorkspaceChatTarget): string | null {
+  if (target.kind === "chamber") return target.registryId;
+  if (target.kind === "agent") return target.chamberRegistryId;
+  return null;
+}
+
+function buildChatRequestPayload(
+  text: string,
+  mode: ExecutionMode,
+  target: WorkspaceChatTarget,
+  routeSourceEntityId: string | null,
+  orchestrator: CityHallOrchestrator | null,
+  turbo?: boolean,
+  attachmentIds?: string[],
+) {
+  if (target.kind === "agent") {
+    return {
+      taskText: text,
+      executionMode: "fast" as ExecutionMode,
+      targetAgentId: target.agentId,
+      directTargetEntityId: target.chamberRegistryId,
+      sourceEntityId: target.chamberRegistryId,
+      turbo,
+      attachmentIds,
+    };
+  }
+  if (target.kind === "chamber") {
+    const isManagerEntry = target.isMainChamber === true && mode === "fast";
+    return {
+      taskText: text,
+      executionMode: mode,
+      sourceEntityId: target.registryId,
+      ...(isManagerEntry ? {} : { directTargetEntityId: target.registryId }),
+      turbo,
+      attachmentIds,
+    };
+  }
+  const mayorSource =
+    routeSourceEntityId ?? orchestrator?.chamberRegistryId ?? undefined;
+  if (orchestrator && mode === "fast") {
+    return {
+      taskText: text,
+      executionMode: "fast" as ExecutionMode,
+      targetAgentId: orchestrator.agentId,
+      directTargetEntityId: orchestrator.chamberRegistryId,
+      ...(mayorSource ? { sourceEntityId: mayorSource } : {}),
+      turbo,
+      attachmentIds,
+    };
+  }
+  return {
+    taskText: text,
+    executionMode: mode,
+    ...(mayorSource ? { sourceEntityId: mayorSource } : {}),
+    turbo,
+    attachmentIds,
+  };
+}
+
+function formatRoutingMeta(result: ExecuteChatTaskResult): string | undefined {
+  if (result.mode === "workflow") {
+    const names = result.steps
+      .map((s) => s.target_chamber?.name || `шаг ${s.step_order}`)
+      .join(" → ");
+    return `Workflow (${result.status}): ${names}`;
+  }
+  if (result.mode === "single" && result.targetName) {
+    const parts = [result.targetName];
+    if (result.agentName) parts.push(result.agentName);
+    if (result.executionMode === "team") parts.push("Team");
+    if (result.executionMode === "council") parts.push("Council");
+    return parts.join(" → ");
+  }
+  const t = result.routing.targets[0];
+  const parts = [
+    result.executionMode ? `mode: ${result.executionMode}` : null,
+    result.targetName || t?.entityRegistryId,
+    result.agentName ? `агент: ${result.agentName}` : null,
+    result.routing.method,
+    result.routing.agentCount ? `agents: ${result.routing.agentCount}` : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function buildAssistantMeta(
+  data: ExecuteChatTaskResult,
+  routePath?: string,
+): string | undefined {
+  const routingMeta = formatRoutingMeta(data);
+  let meta = routePath ?? routingMeta;
+  if (
+    data.mode === "single" &&
+    (data.executionMode === "team" || data.executionMode === "council") &&
+    routePath &&
+    routingMeta
+  ) {
+    const modeParts = routingMeta
+      .split(" · ")
+      .filter((p) => p.startsWith("mode:") || p.startsWith("agents:"));
+    if (modeParts.length) meta = `${modeParts.join(" · ")} · ${routePath}`;
+  }
+  return meta ?? routingMeta;
+}
+
+function formatMessageTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString("ru-RU", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function userMessage(text: string, attachments?: ChatAttachment[]): ChatMessage {
+  return toStoredChatMessage({ id: `u-${Date.now()}`, role: "user", text, attachments });
+}
+
+function pendingFilesToAttachments(files: File[]): ChatAttachment[] {
+  return files.map((file, index) => {
+    const { kind } = classifyKnowledgeFile(file);
+    return {
+      id: `pending-${Date.now()}-${index}`,
+      title: file.name,
+      mimeType: file.type || null,
+      kind,
+      fileUrl: null,
+      contentPreview: null,
+    };
+  });
+}
+
+function assistantMessage(
+  partial: Omit<ChatMessage, "role" | "createdAt"> & { role?: "assistant" },
+): ChatMessage {
+  return toStoredChatMessage({ role: "assistant", ...partial });
+}
+
+export function WorkspaceMayorChat() {
+  const { dockOpen, expanded, target, openDock, closeDock, toggleExpanded, setExpanded } =
+    useWorkspaceChat();
+  const { executionMode, setExecutionMode } = useWorkspaceExecutionMode();
+  const [hasUnreadAnswer, setHasUnreadAnswer] = useState(false);
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    loadWorkspaceChatHistory(DEFAULT_MAYOR_CHAT_TARGET),
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [turbo, setTurbo] = useState<boolean>(false);
+  const [chamberTierCounts, setChamberTierCounts] = useState<{
+    free: number;
+    cheap: number;
+    mid: number;
+    premium: number;
+  } | null>(null);
+  const [teamRosterEligible, setTeamRosterEligible] = useState(true);
+  const [councilRosterEligible, setCouncilRosterEligible] = useState(true);
+  const [chamberName, setChamberName] = useState(DEFAULT_CHAMBER_NAME);
+  const [councilGateOpen, setCouncilGateOpen] = useState(false);
+  const [pendingCouncilText, setPendingCouncilText] = useState("");
+  const [councilTargetEligible, setCouncilTargetEligible] = useState(true);
+  const [teamTargetEligible, setTeamTargetEligible] = useState(true);
+  const [pendingGateMode, setPendingGateMode] = useState<"team" | "council">("council");
+  const listRef = useRef<HTMLDivElement>(null);
+  const prevDockOpenRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const chatFileRef = useRef<HTMLInputElement>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const seenEscalationIdsRef = useRef<Set<string>>(new Set());
+  const [selectedExecAgentId, setSelectedExecAgentId] = useState<string | null>(null);
+  const [cityHallOrchestrator, setCityHallOrchestrator] = useState<CityHallOrchestrator | null>(
+    null,
+  );
+  const [debateChambersByTier, setDebateChambersByTier] = useState<CityHallDebateChambersByTier>(
+    {},
+  );
+  const [debateTierCounts, setDebateTierCounts] = useState<Record<CostTier, number> | null>(
+    null,
+  );
+  const [debateConfigured, setDebateConfigured] = useState(false);
+  const [debatePickerOpen, setDebatePickerOpen] = useState(false);
+  const [pendingDebateText, setPendingDebateText] = useState("");
+  const [debateLoading, setDebateLoading] = useState(false);
+  const [structureGateOpen, setStructureGateOpen] = useState(false);
+  const [pendingStructurePlan, setPendingStructurePlan] = useState<TechStructurePlan | null>(null);
+  const [structureExecuting, setStructureExecuting] = useState(false);
+  const {
+    applyChatRoute,
+    startWorkflowReplay,
+    routeSourceEntityId,
+    executionProgress,
+    beginExecutionProgress,
+    markExecutionRouting,
+    markExecutionRunning,
+    tickExecutionActiveAgent,
+    completeExecutionProgress,
+    failExecutionProgress,
+    clearExecutionProgress,
+  } = useWorkspaceRoute();
+  const { recordLastParticipationExecution } = useWorkspaceSelection();
+
+  const rosterEntityId = resolveChatRosterEntityId(target);
+  const mayorChamberId =
+    target.kind === "mayor" ? cityHallOrchestrator?.chamberRegistryId ?? null : null;
+  const chatSourceEntityId = rosterEntityId ?? routeSourceEntityId ?? mayorChamberId;
+  const agentDirectMode = target.kind === "agent";
+
+  const syncInputHeight = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const next = Math.min(Math.max(el.scrollHeight, CHAT_INPUT_MIN_PX), CHAT_INPUT_MAX_PX);
+    el.style.height = `${next}px`;
+  }, []);
+
+  useEffect(() => {
+    syncInputHeight();
+  }, [input, syncInputHeight]);
+
+  const prevHistoryKeyRef = useRef<string | null>(null);
+  const skipNextSaveRef = useRef(true);
+
+  useEffect(() => {
+    const key = workspaceChatTargetKey(target);
+    if (prevHistoryKeyRef.current === key) return;
+    prevHistoryKeyRef.current = key;
+    skipNextSaveRef.current = true;
+    setMessages(loadWorkspaceChatHistory(target));
+    setError(null);
+  }, [target]);
+
+  useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    saveWorkspaceChatHistory(target, messages);
+  }, [target, messages]);
+
+  useEffect(() => {
+    const wasOpen = prevDockOpenRef.current;
+    prevDockOpenRef.current = dockOpen;
+    if (dockOpen && !wasOpen && messages.length > 0) {
+      setExpanded(true);
+    }
+  }, [dockOpen, messages.length, setExpanded]);
+
+  const teamDisabled = !teamRosterEligible;
+  const councilDisabled = !councilRosterEligible;
+
+  useEffect(() => {
+    if (teamDisabled && executionMode === "team") setExecutionMode("fast");
+    if (councilDisabled && executionMode === "council") setExecutionMode("fast");
+  }, [teamDisabled, councilDisabled, executionMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/workspace/city-hall-orchestrator")
+      .then((r) => r.json())
+      .then(
+        (data: {
+          configured?: boolean;
+          debateConfigured?: boolean;
+          tierCounts?: Record<CostTier, number>;
+          debateChambersByTier?: CityHallDebateChambersByTier;
+        } & Partial<CityHallOrchestrator>) => {
+          if (cancelled) return;
+          if (data.configured && data.agentId && data.chamberRegistryId) {
+            setCityHallOrchestrator({
+              chamberRegistryId: data.chamberRegistryId,
+              chamberName: data.chamberName ?? "City Hall",
+              agentId: data.agentId,
+              agentName: data.agentName ?? "Mayor",
+            });
+          }
+          if (data.debateChambersByTier) {
+            setDebateChambersByTier(data.debateChambersByTier);
+          }
+          if (data.tierCounts) {
+            setDebateTierCounts(data.tierCounts);
+          }
+          setDebateConfigured(Boolean(data.debateConfigured));
+        },
+      )
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const debateReady =
+    debateConfigured ||
+    Object.values(debateChambersByTier).some((chamber) => (chamber?.agentCount ?? 0) >= 2);
+
+  useEffect(() => {
+    if (!dockOpen) return;
+
+    let cancelled = false;
+
+    async function pollEscalations() {
+      try {
+        const res = await fetch("/api/tech-department/escalations", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          escalations?: Array<{
+            id: string;
+            userMessage: string;
+            mayorAgentName: string | null;
+            provider: string;
+            timestamp: string;
+          }>;
+        };
+        const pending = data.escalations ?? [];
+        const fresh = pending.filter((e) => !seenEscalationIdsRef.current.has(e.id));
+        if (fresh.length === 0 || cancelled) return;
+
+        for (const e of fresh) {
+          seenEscalationIdsRef.current.add(e.id);
+          await fetch("/api/tech-department/escalations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: e.id }),
+          }).catch(() => {});
+        }
+
+        const mayorLabel =
+          fresh[0]?.mayorAgentName ?? cityHallOrchestrator?.agentName ?? "Мэр";
+        setMessages((prev) => [
+          ...prev,
+          ...fresh.map((e) =>
+            assistantMessage({
+              id: `esc-${e.id}`,
+              text: e.userMessage,
+              meta: `${mayorLabel} · эскалация · ${e.provider}`,
+              techEscalation: true,
+            }),
+          ),
+        ]);
+        if (!expanded) setHasUnreadAnswer(true);
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    void pollEscalations();
+    const timer = window.setInterval(() => void pollEscalations(), 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [dockOpen, expanded, cityHallOrchestrator?.agentName]);
+
+  useEffect(() => {
+    if (!chatSourceEntityId) {
+      setTeamRosterEligible(true);
+      setCouncilRosterEligible(true);
+      setChamberName(DEFAULT_CHAMBER_NAME);
+      return;
+    }
+
+    let cancelled = false;
+    fetch(`/api/chamber-roster?entityId=${encodeURIComponent(chatSourceEntityId)}&turbo=${turbo}`)
+      .then((r) => r.json())
+      .then(
+        (data: {
+          teamEligible?: boolean;
+          councilEligible?: boolean;
+          turboEligible?: boolean;
+          tierCounts?: { free?: number; cheap?: number; mid?: number; premium?: number };
+          chamberName?: string | null;
+        }) => {
+          if (cancelled) return;
+          setTeamRosterEligible(data.teamEligible ?? ((data.tierCounts?.cheap ?? 0) > 0));
+          setCouncilRosterEligible(data.councilEligible ?? ((data.tierCounts?.mid ?? 0) > 0));
+          setChamberTierCounts({
+            free: data.tierCounts?.free ?? 0,
+            cheap: data.tierCounts?.cheap ?? 0,
+            mid: data.tierCounts?.mid ?? 0,
+            premium: data.tierCounts?.premium ?? 0,
+          });
+          if (data.chamberName) setChamberName(data.chamberName);
+        },
+      )
+      .catch(() => {
+        if (!cancelled) {
+          setTeamRosterEligible(true);
+          setCouncilRosterEligible(true);
+          setChamberTierCounts(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatSourceEntityId, turbo]);
+
+  const estimate =
+    EXECUTION_MODE_OPTIONS.find((o) => o.id === executionMode)?.estimate ??
+    EXECUTION_MODE_OPTIONS[0].estimate;
+
+  useEffect(() => {
+    if (!executionProgress) return;
+    if (executionProgress.phase !== "complete" && executionProgress.phase !== "error") return;
+    const timer = window.setTimeout(() => clearExecutionProgress(), 350);
+    return () => window.clearTimeout(timer);
+  }, [executionProgress?.phase, clearExecutionProgress]);
+
+  useEffect(() => {
+    if (!dockOpen) return;
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, loading, executionProgress, dockOpen]);
+
+  useEffect(() => {
+    if (!executionProgress || executionProgress.phase !== "executing") return;
+    const timer = window.setInterval(() => tickExecutionActiveAgent(), 1400);
+    return () => window.clearInterval(timer);
+  }, [executionProgress?.phase, tickExecutionActiveAgent]);
+
+  function handleToggleExpanded() {
+    if (!expanded) setHasUnreadAnswer(false);
+    toggleExpanded();
+  }
+
+  async function resolveTargetRoster(
+    targetEntityId: string,
+  ): Promise<{ targetName: string | null; roster: RosterAgent[] }> {
+    const rosterRes = await fetch(
+      `/api/chamber-roster?entityId=${encodeURIComponent(targetEntityId)}&turbo=${turbo}`,
+    );
+    const rosterJson = (await rosterRes.json()) as {
+      chamberName?: string | null;
+      agents?: RosterAgent[];
+    };
+    return {
+      targetName: rosterJson.chamberName ?? null,
+      roster: rosterJson.agents ?? [],
+    };
+  }
+
+  async function openCouncilGate(text: string, mode: "team" | "council") {
+    setPendingCouncilText(text);
+    setPendingGateMode(mode);
+    setCouncilGateOpen(true);
+    setCouncilTargetEligible(true);
+    setTeamTargetEligible(true);
+
+    try {
+      const res = await fetch("/api/route", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: text,
+          ...(chatSourceEntityId ? { sourceEntityId: chatSourceEntityId } : {}),
+        }),
+      });
+      const data = (await res.json()) as {
+        decision?: { targets?: Array<{ entityRegistryId?: string }> };
+      };
+      const targetId = data.decision?.targets?.[0]?.entityRegistryId;
+      if (!targetId) return;
+
+      let rosterEntityId = targetId;
+      if (routeSourceEntityId) {
+        const [targetRosterRes, sourceRosterRes] = await Promise.all([
+          fetch(`/api/chamber-roster?entityId=${encodeURIComponent(targetId)}&turbo=${turbo}`),
+          fetch(
+            `/api/chamber-roster?entityId=${encodeURIComponent(routeSourceEntityId)}&turbo=${turbo}`,
+          ),
+        ]);
+        const targetRoster = (await targetRosterRes.json()) as {
+          councilEligible?: boolean;
+        };
+        const sourceRoster = (await sourceRosterRes.json()) as {
+          chamberName?: string | null;
+          councilEligible?: boolean;
+        };
+        if (!targetRoster.councilEligible && sourceRoster.councilEligible) {
+          rosterEntityId = routeSourceEntityId;
+        }
+      } else if (chatSourceEntityId && chatSourceEntityId !== targetId) {
+        const sourceRosterRes = await fetch(
+          `/api/chamber-roster?entityId=${encodeURIComponent(chatSourceEntityId)}&turbo=${turbo}`,
+        );
+        const sourceRoster = (await sourceRosterRes.json()) as {
+          councilEligible?: boolean;
+        };
+        if (sourceRoster.councilEligible) {
+          rosterEntityId = chatSourceEntityId;
+        }
+      }
+
+      const rosterRes = await fetch(
+        `/api/chamber-roster?entityId=${encodeURIComponent(rosterEntityId)}&turbo=${turbo}`,
+      );
+      const roster = (await rosterRes.json()) as {
+        chamberName?: string | null;
+        councilEligible?: boolean;
+        teamEligible?: boolean;
+      };
+      if (roster.chamberName) setChamberName(roster.chamberName);
+      setCouncilTargetEligible(roster.councilEligible !== false);
+      setTeamTargetEligible(roster.teamEligible !== false);
+    } catch {
+      /* gate still usable; server validates on send */
+    }
+  }
+
+  function notifyAnswerIfCollapsed() {
+    if (!expanded) setHasUnreadAnswer(true);
+  }
+
+  async function sendTask(text: string, mode: ExecutionMode, filesToUpload: File[] = []) {
+    setLoading(true);
+    setError(null);
+    setSelectedExecAgentId(null);
+    clearExecutionProgress();
+
+    const effectiveMode = agentDirectMode ? "fast" : mode;
+
+    beginExecutionProgress({
+      taskText: text,
+      mode: effectiveMode,
+      roster: [],
+      agentCount: 0,
+    });
+
+    try {
+      let decision: RouteDecision | null = null;
+      let targetId = chatSourceEntityId;
+      let targetName: string | null = null;
+      let roster: RosterAgent[] = [];
+
+      if (agentDirectMode && target.kind === "agent") {
+        targetId = target.chamberRegistryId;
+        targetName = target.label;
+        roster = [
+          {
+            id: target.agentId,
+            slug: target.label.toLowerCase().replace(/\s+/g, "-"),
+            name: target.label,
+          },
+        ];
+        beginExecutionProgress({
+          taskText: text,
+          mode: "fast",
+          roster,
+          agentCount: 1,
+        });
+        markExecutionRunning("Fast: ответ агента…");
+      } else if (target.kind === "mayor" && cityHallOrchestrator && effectiveMode === "fast") {
+        targetId = cityHallOrchestrator.chamberRegistryId;
+        targetName = cityHallOrchestrator.chamberName;
+        roster = [
+          {
+            id: cityHallOrchestrator.agentId,
+            slug: cityHallOrchestrator.agentName.toLowerCase().replace(/\s+/g, "-"),
+            name: cityHallOrchestrator.agentName,
+          },
+        ];
+        beginExecutionProgress({
+          taskText: text,
+          mode: "fast",
+          roster,
+          agentCount: 1,
+        });
+        markExecutionRunning(`Mayor: ${cityHallOrchestrator.agentName}…`);
+        const localDecision: RouteDecision = {
+          targets: [
+            {
+              entityRegistryId: cityHallOrchestrator.chamberRegistryId,
+              confidence: 1,
+              reason: "local_mayor",
+            },
+          ],
+          method: "rule-based",
+          agentCount: 1,
+        };
+        markExecutionRouting(
+          localDecision,
+          cityHallOrchestrator.chamberName,
+          roster,
+          1,
+          {
+            agentId: cityHallOrchestrator.agentId,
+            chamberRegistryId: cityHallOrchestrator.chamberRegistryId,
+          },
+        );
+      } else {
+        const routeRes = await fetch("/api/route", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: text,
+            ...(chatSourceEntityId ? { sourceEntityId: chatSourceEntityId } : {}),
+          }),
+        });
+        const routeData = (await routeRes.json()) as {
+          decision?: RouteDecision;
+          error?: string;
+        };
+        if (!routeRes.ok || !routeData.decision) {
+          throw new Error(routeData.error ?? "Ошибка маршрутизации");
+        }
+
+        decision = routeData.decision;
+        if (target.kind === "chamber" && !target.isMainChamber) {
+          decision = {
+            ...decision,
+            targets: [
+              {
+                entityRegistryId: target.registryId,
+                confidence: 1,
+                reason: "direct_chamber",
+              },
+            ],
+            method: "rule-based",
+          };
+        }
+
+        targetId =
+          decision.targets[0]?.entityRegistryId ?? chatSourceEntityId ?? null;
+        const rosterResult = targetId
+          ? await resolveTargetRoster(targetId)
+          : { targetName: null, roster: [] as RosterAgent[] };
+        targetName = rosterResult.targetName;
+        roster = rosterResult.roster;
+
+        markExecutionRouting(
+          decision,
+          targetName,
+          roster,
+          roster.length,
+          target.kind === "mayor" && cityHallOrchestrator
+            ? {
+                agentId: cityHallOrchestrator.agentId,
+                chamberRegistryId: cityHallOrchestrator.chamberRegistryId,
+              }
+            : null,
+        );
+        markExecutionRunning(
+          effectiveMode === "council"
+            ? "Council: сбор мнений и синтез…"
+            : effectiveMode === "team"
+              ? "Team: опрос экспертов…"
+              : "Fast: ответ агента…",
+        );
+      }
+
+      let attachmentIds: string[] = [];
+      let uploadedAttachments: ChatAttachment[] = [];
+      const uploadRegistryId =
+        targetId ??
+        (target.kind === "chamber"
+          ? target.registryId
+          : target.kind === "agent"
+            ? target.chamberRegistryId
+            : null);
+
+      if (filesToUpload.length > 0) {
+        if (!uploadRegistryId) {
+          throw new Error("Не удалось определить отдел для загрузки файлов");
+        }
+        markExecutionRunning("Загрузка файлов в библиотеку…");
+        uploadedAttachments = await uploadChatAttachmentsToLibrary({
+          files: filesToUpload,
+          registryId: uploadRegistryId,
+        });
+        attachmentIds = uploadedAttachments.map((attachment) => attachment.id);
+      }
+
+      const chatPayload = buildChatRequestPayload(
+        text,
+        effectiveMode,
+        target,
+        routeSourceEntityId,
+        cityHallOrchestrator,
+        turbo,
+        attachmentIds.length > 0 ? attachmentIds : undefined,
+      );
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(chatPayload),
+      });
+      const data = (await res.json()) as ExecuteChatTaskResult & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Ошибка чата");
+
+      const answer =
+        data.mode === "workflow"
+          ? data.answer || "(workflow завершён без текста ответа)"
+          : data.answer;
+
+      const routeSteps = data.mode === "single" ? applyChatRoute(data) : null;
+      const routePath = routeSteps?.length ? formatRoutePath(routeSteps) : undefined;
+      const meta = buildAssistantMeta(data, routePath);
+      const stepLabel =
+        routePath ??
+        (data.mode === "single" ? data.targetName ?? "Выполнено" : "Workflow завершён");
+
+      completeExecutionProgress(data, stepLabel);
+
+      const executionStatus = deriveExecutionResultFromChatTask(data);
+      const storeExecutionStatus =
+        data.mode !== "single" ||
+        Boolean(data.fast || data.team || data.council) ||
+        executionStatus.kind !== "full_success";
+
+      if (
+        data.mode === "single" &&
+        (effectiveMode === "fast" || effectiveMode === "team" || effectiveMode === "council") &&
+        (data.fast?.agents.length || data.team?.agents.length || data.council?.agents.length)
+      ) {
+        const payload =
+          effectiveMode === "fast"
+            ? data.fast
+            : effectiveMode === "team"
+              ? data.team
+              : data.council;
+        const chamberRegistryId =
+          data.routing.targets[0]?.entityRegistryId ?? chatSourceEntityId;
+        if (payload && chamberRegistryId) {
+          recordLastParticipationExecution({
+            mode: effectiveMode,
+            chamberRegistryId,
+            agentRegistryIds: payload.agents.map((a) => a.agentId),
+            taskText: text,
+            at: new Date().toISOString(),
+          });
+        }
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        assistantMessage({
+          id: `a-${Date.now()}`,
+          text: answer,
+          meta,
+          attachments: data.mode === "single" ? data.attachments : undefined,
+          governmentFallback:
+            data.mode === "single" ? Boolean(data.governmentFallback) : false,
+          fast: data.mode === "single" ? data.fast : undefined,
+          team: data.mode === "single" ? data.team : undefined,
+          council: data.mode === "single" ? data.council : undefined,
+          executionStatus: storeExecutionStatus ? executionStatus : undefined,
+        }),
+      ]);
+      notifyAnswerIfCollapsed();
+
+      if (data.mode === "single" && data.structurePlan) {
+        setPendingStructurePlan(data.structurePlan);
+        setStructureGateOpen(true);
+      }
+
+      if (data.mode === "workflow") {
+        startWorkflowReplay(data.steps);
+        setMessages((prev) => [
+          ...prev,
+          assistantMessage({
+            id: `w-${Date.now()}`,
+            text: formatWorkflowSidebar(data.steps),
+            meta: "Workflow",
+          }),
+        ]);
+        notifyAnswerIfCollapsed();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
+      failExecutionProgress(msg);
+      setError(msg);
+      setMessages((prev) => [
+        ...prev,
+        assistantMessage({
+          id: `e-${Date.now()}`,
+          text: `Ошибка: ${msg}`,
+          isError: true,
+          executionStatus: {
+            kind: "full_failure",
+            title: "Сбой",
+            detail: msg,
+            hasAnswer: false,
+          },
+        }),
+      ]);
+      notifyAnswerIfCollapsed();
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const text = input.trim();
+    const files = pendingFiles;
+    if ((!text && files.length === 0) || loading || debateLoading) return;
+    if (!dockOpen) openDock(target);
+
+    if ((executionMode === "council" || executionMode === "team") && !agentDirectMode) {
+      void openCouncilGate(text, executionMode);
+      return;
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      userMessage(text || "📎 Файлы", files.length > 0 ? pendingFilesToAttachments(files) : undefined),
+    ]);
+    setInput("");
+    setPendingFiles([]);
+    if (chatFileRef.current) chatFileRef.current.value = "";
+    requestAnimationFrame(syncInputHeight);
+    void sendTask(text, executionMode, files);
+  }
+
+  function handleCouncilConfirm() {
+    const text = pendingCouncilText.trim();
+    const isEligible = pendingGateMode === "council" ? councilTargetEligible : teamTargetEligible;
+    if (!text || loading || !isEligible) return;
+    setCouncilGateOpen(false);
+    setMessages((prev) => [...prev, userMessage(text)]);
+    setInput("");
+    requestAnimationFrame(syncInputHeight);
+    setPendingCouncilText("");
+    void sendTask(text, pendingGateMode);
+  }
+
+  function handleCouncilCancel() {
+    setCouncilGateOpen(false);
+    setPendingCouncilText("");
+  }
+
+  async function sendDebate(text: string, tierMode: DebateTierMode) {
+    setDebateLoading(true);
+    setLoading(true);
+    setError(null);
+    clearExecutionProgress();
+    beginExecutionProgress({
+      taskText: text,
+      mode: "fast",
+      roster: [],
+      agentCount: 2,
+    });
+    markExecutionRunning("Спор: Совет города…");
+
+    try {
+      const res = await fetch("/api/debate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskText: text,
+          tierMode,
+          callerKind: "mayor",
+          ...(cityHallOrchestrator?.chamberRegistryId
+            ? { sourceEntityId: cityHallOrchestrator.chamberRegistryId }
+            : {}),
+        }),
+      });
+      const data = (await res.json()) as AgentDebateResult & { error?: string };
+      if (!res.ok || data.error) {
+        throw new Error(data.error ?? "Ошибка спора");
+      }
+
+      completeExecutionProgress(
+        {
+          mode: "single",
+          executionMode: "fast",
+          answer: data.answer,
+          routing: { targets: [], method: "rule-based", agentCount: 2 },
+          targetName: data.councilChamberName,
+          agentName: `${data.author.name} ↔ ${data.reviewer.name}`,
+          agentId: data.author.agentId,
+        },
+        "Спор завершён",
+      );
+      const meta = `Спор · ${data.author.name} ↔ ${data.reviewer.name} · ${data.councilChamberName}`;
+      setMessages((prev) => [
+        ...prev,
+        assistantMessage({
+          id: `d-${Date.now()}`,
+          text: data.answer,
+          meta,
+          debate: {
+            debateId: data.debateId,
+            closedReason: data.closedReason,
+            authorName: data.author.name,
+            reviewerName: data.reviewer.name,
+            rounds: data.rounds,
+          },
+        }),
+      ]);
+      notifyAnswerIfCollapsed();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
+      failExecutionProgress(msg);
+      setError(msg);
+      setMessages((prev) => [
+        ...prev,
+        assistantMessage({
+          id: `de-${Date.now()}`,
+          text: `Ошибка спора: ${msg}`,
+          isError: true,
+        }),
+      ]);
+      notifyAnswerIfCollapsed();
+    } finally {
+      setDebateLoading(false);
+      setLoading(false);
+    }
+  }
+
+  function handleDebateClick() {
+    const text = input.trim();
+    if (!text || loading || debateLoading) return;
+    if (!dockOpen) openDock(target);
+    if (!debateReady) {
+      setError("Отделы спора City Hall не настроены (нужно ≥2 агента в выбранном tier)");
+      return;
+    }
+    setPendingDebateText(text);
+    setDebatePickerOpen(true);
+  }
+
+  function handleDebateConfirm(tierMode: DebateTierMode) {
+    const text = pendingDebateText.trim();
+    if (!text || loading || debateLoading) return;
+    setDebatePickerOpen(false);
+    setMessages((prev) => [...prev, userMessage(text)]);
+    setInput("");
+    requestAnimationFrame(syncInputHeight);
+    setPendingDebateText("");
+    void sendDebate(text, tierMode);
+  }
+
+  function handleDebateCancel() {
+    setDebatePickerOpen(false);
+    setPendingDebateText("");
+  }
+
+  function handleStructureCancel() {
+    const planId = pendingStructurePlan?.planId;
+    setStructureGateOpen(false);
+    setPendingStructurePlan(null);
+    if (planId) {
+      void fetch("/api/tech-department/structure/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId }),
+      });
+    }
+  }
+
+  async function handleStructureConfirm() {
+    const plan = pendingStructurePlan;
+    if (!plan || structureExecuting) return;
+    setStructureExecuting(true);
+    try {
+      const res = await fetch("/api/tech-department/structure/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId, confirmed: true }),
+      });
+      const body = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Ошибка выполнения плана");
+
+      setStructureGateOpen(false);
+      setPendingStructurePlan(null);
+      setMessages((prev) => [
+        ...prev,
+        assistantMessage({
+          id: `ts-${Date.now()}`,
+          text: body.message ?? "Структурные изменения выполнены.",
+          meta: "Технический отдел · structure execute",
+        }),
+      ]);
+      notifyAnswerIfCollapsed();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
+      setError(msg);
+      setMessages((prev) => [
+        ...prev,
+        assistantMessage({
+          id: `tse-${Date.now()}`,
+          text: `Ошибка выполнения плана: ${msg}`,
+          isError: true,
+        }),
+      ]);
+    } finally {
+      setStructureExecuting(false);
+    }
+  }
+
+  const loadingLabel =
+    debateLoading
+      ? "Спор: цепочка confirm/revise…"
+      : executionMode === "council"
+      ? "Council: сбор мнений и синтез отчёта…"
+      : executionMode === "team"
+        ? "Team: сбор мнений экспертов…"
+        : agentDirectMode
+          ? "Ответ агента…"
+          : cityHallOrchestrator && target.kind === "mayor"
+            ? `${cityHallOrchestrator.agentName}…`
+            : "Маршрутизация…";
+
+  const dockTitle =
+    target.kind === "agent"
+      ? target.label
+      : target.kind === "chamber"
+        ? target.label
+        : cityHallOrchestrator?.agentName ?? DEFAULT_MAYOR_CHAT_TARGET.label;
+
+  const placeholder =
+    target.kind === "agent"
+      ? `Вопрос для ${target.label}…`
+      : target.kind === "chamber"
+        ? `Вопрос в отдел «${target.label}»…`
+        : cityHallOrchestrator
+          ? `Задача для ${cityHallOrchestrator.agentName}…`
+          : "Задача для Mayor…";
+
+  return (
+    <>
+      <CouncilConfirmationGate
+        open={councilGateOpen}
+        chamberName={chamberName}
+        taskPreview={pendingCouncilText}
+        confirmDisabled={pendingGateMode === "council" ? !councilTargetEligible : !teamTargetEligible}
+        onCancel={handleCouncilCancel}
+        onConfirm={handleCouncilConfirm}
+        mode={pendingGateMode}
+      />
+
+      <TechStructureConfirmationGate
+        open={structureGateOpen}
+        planSummary={pendingStructurePlan?.summary ?? ""}
+        actionLines={
+          pendingStructurePlan?.actions.map((a, i) => `${i + 1}. ${a.description}`) ?? []
+        }
+        confirmDisabled={structureExecuting}
+        onCancel={handleStructureCancel}
+        onConfirm={() => void handleStructureConfirm()}
+      />
+
+      <DebateTierPicker
+        open={debatePickerOpen}
+        taskPreview={pendingDebateText}
+        debateChambersByTier={debateChambersByTier}
+        tierCounts={
+          debateTierCounts ?? { free: 0, cheap: 0, mid: 0, premium: 0 }
+        }
+        onCancel={handleDebateCancel}
+        onConfirm={handleDebateConfirm}
+      />
+
+      {!dockOpen && (
+        <button
+          type="button"
+          data-testid="workspace-chat-launcher"
+          onClick={() => openDock()}
+          className="workspace-chat-launcher pointer-events-auto"
+          title="Открыть чат Mayor"
+        >
+          <span className="text-xs font-medium text-stone-200">Mayor</span>
+          <span aria-hidden className="text-stone-400">
+            ▲
+          </span>
+          {hasUnreadAnswer && (
+            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-400" />
+          )}
+        </button>
+      )}
+
+      {dockOpen && (
+        <div
+          className={`workspace-chat-dock pointer-events-auto ${
+            expanded ? "workspace-chat-dock--expanded" : ""
+          }`}
+          data-testid="workspace-mayor-chat"
+        >
+          <header className="workspace-chat-dock__header">
+            <div className="workspace-chat-dock__title-block">
+              <div className="workspace-chat-dock__eyebrow">
+                {target.kind === "mayor" ? "Mayor" : target.kind === "chamber" ? "Отдел" : "Агент"}
+              </div>
+              <div className="workspace-chat-dock__title">{dockTitle}</div>
+              <p className="workspace-chat-dock__subtitle">{chatTargetHint(target)}</p>
+            </div>
+            <div className="workspace-chat-dock__header-actions">
+              <button
+                type="button"
+                data-testid="workspace-mayor-chat-expand"
+                aria-expanded={expanded}
+                aria-label={expanded ? "Свернуть чат" : "Развернуть чат на весь экран"}
+                title={expanded ? "Свернуть" : "На весь экран"}
+                onClick={handleToggleExpanded}
+                className={`workspace-chat-dock__icon-btn ${
+                  hasUnreadAnswer && !expanded ? "workspace-chat-dock__icon-btn--alert" : ""
+                }`}
+              >
+                {expanded ? "Свернуть" : "На весь экран"}
+              </button>
+              <button
+                type="button"
+                data-testid="workspace-chat-hide"
+                onClick={closeDock}
+                className="workspace-chat-dock__icon-btn"
+                title="Скрыть чат"
+                aria-label="Скрыть чат"
+              >
+                ✕
+              </button>
+            </div>
+          </header>
+
+          {!agentDirectMode && (
+            <div className="workspace-chat-dock__toolbar">
+              <div
+                className="workspace-chat-mode-switch"
+                role="radiogroup"
+                aria-label="Режим выполнения"
+              >
+                {EXECUTION_MODE_OPTIONS.map((option) => {
+                  const disabled =
+                    (option.id === "team" && teamDisabled) ||
+                    (option.id === "council" && councilDisabled);
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={executionMode === option.id}
+                      disabled={disabled || loading}
+                      data-testid={`workspace-chat-mode-${option.id}`}
+                      onClick={() => setExecutionMode(option.id)}
+                      className={`workspace-chat-mode-switch__btn${
+                        executionMode === option.id ? " workspace-chat-mode-switch__btn--active" : ""
+                      }${disabled ? " workspace-chat-mode-switch__btn--disabled" : ""}`}
+                      title={disabled ? option.disabledReason ?? option.hint : option.hint}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <label className="workspace-chat-turbo-toggle">
+                <input
+                  type="checkbox"
+                  checked={turbo}
+                  onChange={(e) => setTurbo(e.target.checked)}
+                  data-testid="workspace-turbo-toggle"
+                />
+                <span>Turbo</span>
+              </label>
+              {target.kind === "mayor" && (
+                <button
+                  type="button"
+                  className="workspace-chat-debate-btn"
+                  data-testid="workspace-debate-launch"
+                  disabled={loading || debateLoading || !input.trim() || !debateReady}
+                  onClick={handleDebateClick}
+                  title="Спор между двумя агентами Совета города"
+                >
+                  Спор
+                </button>
+              )}
+              <span className="workspace-chat-dock__estimate" data-testid="workspace-execution-estimate">
+                {estimate}
+              </span>
+            </div>
+          )}
+
+          {executionProgress &&
+            (executionProgress.phase === "routing" || executionProgress.phase === "executing") && (
+            <div className="workspace-chat-dock__progress">
+              <ChatExecutionProgress
+                progress={executionProgress}
+                selectedAgentId={selectedExecAgentId}
+                onSelectAgent={setSelectedExecAgentId}
+              />
+            </div>
+          )}
+
+          <div ref={listRef} className="workspace-chat-dock-messages" data-testid="workspace-chat-history">
+            {messages.length === 0 && !loading && (
+              <p className="workspace-chat-dock__empty">История пуста — задайте вопрос ниже.</p>
+            )}
+            {messages.map((m) => (
+              <article
+                key={m.id}
+                className={`workspace-chat-message workspace-chat-message--${m.role}${
+                  m.isError ? " workspace-chat-message--error" : ""
+                }`}
+              >
+                <header className="workspace-chat-message__head">
+                  <span className="workspace-chat-message__author">
+                    {m.role === "user" ? "Вы" : "Ответ"}
+                  </span>
+                  <time className="workspace-chat-message__time" dateTime={m.createdAt}>
+                    {formatMessageTime(m.createdAt)}
+                  </time>
+                </header>
+                <div className="workspace-chat-message__body">{m.text}</div>
+                {m.attachments && m.attachments.length > 0 && (
+                  <ChatMessageAttachments attachments={m.attachments} />
+                )}
+                <ChatMessageDetails message={m} />
+              </article>
+            ))}
+            {loading && (
+              <div className="workspace-chat-dock__loading" aria-live="polite">
+                {loadingLabel}
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <p className="workspace-chat-dock__error" role="alert">
+              {error}
+            </p>
+          )}
+
+          <form ref={formRef} onSubmit={handleSubmit} className="workspace-chat-dock__composer">
+            {pendingFiles.length > 0 && (
+              <div className="workspace-chat-pending-files" data-testid="workspace-chat-pending-files">
+                {pendingFiles.map((file, index) => (
+                  <span key={`${file.name}-${index}`} className="workspace-bubble-chip">
+                    {file.name}
+                    <button
+                      type="button"
+                      aria-label={`Убрать ${file.name}`}
+                      onClick={() =>
+                        setPendingFiles((prev) => prev.filter((_, fileIndex) => fileIndex !== index))
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="workspace-chat-dock__composer-row">
+            <button
+              type="button"
+              className="workspace-chat-dock__attach"
+              data-testid="workspace-mayor-chat-attach"
+              disabled={loading || debateLoading}
+              onClick={() => chatFileRef.current?.click()}
+              title="Прикрепить файл"
+            >
+              📎
+            </button>
+            <input
+              ref={chatFileRef}
+              type="file"
+              className="hidden"
+              multiple
+              accept={KNOWLEDGE_FILE_ACCEPT}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length === 0) return;
+                setPendingFiles((prev) => [...prev, ...picked]);
+              }}
+            />
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (!loading && !debateLoading && (input.trim() || pendingFiles.length > 0)) {
+                    formRef.current?.requestSubmit();
+                  }
+                }
+              }}
+              placeholder={placeholder}
+              disabled={loading || debateLoading}
+              data-testid="workspace-mayor-chat-input"
+              className="workspace-chat-input"
+            />
+            <button
+              type="submit"
+              disabled={loading || debateLoading || (!input.trim() && pendingFiles.length === 0)}
+              data-testid="workspace-mayor-chat-send"
+              className="workspace-chat-dock__send"
+            >
+              {loading ? "…" : "Отправить"}
+            </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}

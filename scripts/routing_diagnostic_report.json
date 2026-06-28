@@ -1,0 +1,406 @@
+{
+  "ranAt": "2026-06-28T02:58:38.410Z",
+  "pass": 27,
+  "fail": 2,
+  "ambiguous": 1,
+  "total": 30,
+  "createdEntities": {
+    "buildings": [
+      {
+        "label": "t_Кактусовая_Лавка",
+        "id": "f83e317c-d4f3-44f3-a47e-88fa76135453",
+        "chambers": [
+          {
+            "name": "t_Кактусовая_Лавка_Менеджер",
+            "registryId": "8eff3441-a548-4d75-bf10-621bbd1f6d20",
+            "chamberId": "4e9417cd-dd56-482f-8cc6-b86cd34a2c84"
+          },
+          {
+            "name": "t_Бухгалтерия",
+            "registryId": "9441321f-fafa-42ca-8eed-14c0867b4778",
+            "chamberId": "b2ef1217-5653-4ea1-8b5a-2bf4da75bd66"
+          },
+          {
+            "name": "t_Кружка",
+            "registryId": "06d19641-b4ea-4544-85f1-e9381599d26f",
+            "chamberId": "a109d7a5-3ce2-4aee-a578-86987c8df101"
+          }
+        ]
+      },
+      {
+        "label": "t_Пустышка",
+        "id": "b6e284d2-8c55-4203-aa6e-997bfa08c64a",
+        "chambers": [
+          {
+            "name": "t_Пустышка_Менеджер",
+            "registryId": "6a860038-022f-4f95-aea8-d6dbd50e79b8",
+            "chamberId": "4fc2aa40-452e-4b47-ba60-4689c30fa63b"
+          }
+        ]
+      }
+    ],
+    "freeOnlyChamber": {
+      "chamberId": "51e3d6f5-93a9-4bdb-a663-85a3ec52d111",
+      "registryId": "fd5538ad-df4f-494f-af96-e6528132f5e7",
+      "name": "t_ТолькоФри_Башня_Менеджер",
+      "routingRole": "main"
+    },
+    "knowledgeEntryIds": [
+      "2e05dc2e-7f8e-483c-9814-2a4f5d7c768a",
+      "3a523e83-78bd-4ec5-90e0-b9cebd064fc1",
+      "2183e691-44b2-4cc0-b6c9-2ea21a67566a"
+    ],
+    "connectionId": "ef5ac449-324a-4360-97d2-b15336b5cdcd"
+  },
+  "buildingAudit": [
+    {
+      "id": "7cbdbc8a-502c-4494-a9da-c86ba8776da0",
+      "name": "CARZ",
+      "chamberCount": 0,
+      "internalCount": 0,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "sparse — insufficient for full integration test"
+    },
+    {
+      "id": "9afd85bf-ce54-4c8b-bc78-c2ff7fcd9a57",
+      "name": "Citizly",
+      "chamberCount": 3,
+      "internalCount": 2,
+      "agentCount": 10,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "protected — read-only routing checks only"
+    },
+    {
+      "id": "aa5c2d68-cf23-4290-b9fa-3f83446c1a4f",
+      "name": "City Hall",
+      "chamberCount": 5,
+      "internalCount": 4,
+      "agentCount": 5,
+      "knowledgeCount": 0,
+      "connectionCount": 11,
+      "note": "protected — read-only routing checks only"
+    },
+    {
+      "id": "01a25411-c174-4a12-bfde-6310efe2d04b",
+      "name": "Dengi",
+      "chamberCount": 0,
+      "internalCount": 0,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "sparse — insufficient for full integration test"
+    },
+    {
+      "id": "37ca0a4a-d5d5-445e-a3bc-c94d402f8611",
+      "name": "Garage Doors",
+      "chamberCount": 0,
+      "internalCount": 0,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "sparse — insufficient for full integration test"
+    },
+    {
+      "id": "407d8bc8-8ac9-4fe8-9d8e-31322b51f5f1",
+      "name": "V+",
+      "chamberCount": 0,
+      "internalCount": 0,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "sparse — insufficient for full integration test"
+    },
+    {
+      "id": "e577b962-ec5b-4953-8c5e-a029ac50a34a",
+      "name": "Библиотека",
+      "chamberCount": 3,
+      "internalCount": 2,
+      "agentCount": 3,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "usable"
+    },
+    {
+      "id": "cdf056fc-4552-48ca-a581-27345a13f7ea",
+      "name": "Больничка",
+      "chamberCount": 1,
+      "internalCount": 1,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "sparse — insufficient for full integration test"
+    },
+    {
+      "id": "99de1d47-6c11-488f-8e98-3960a1a37d0f",
+      "name": "Налоговая",
+      "chamberCount": 0,
+      "internalCount": 0,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "sparse — insufficient for full integration test"
+    },
+    {
+      "id": "24a2fb7e-d8ce-47c9-a402-6dbb8976c0c3",
+      "name": "Ресторан",
+      "chamberCount": 0,
+      "internalCount": 0,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "sparse — insufficient for full integration test"
+    },
+    {
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Технический отдел",
+      "chamberCount": 1,
+      "internalCount": 0,
+      "agentCount": 7,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "protected — read-only routing checks only"
+    },
+    {
+      "id": "99a8efff-d39d-4130-8553-7dada4c07b1a",
+      "name": "ЮРИСТЫ",
+      "chamberCount": 2,
+      "internalCount": 1,
+      "agentCount": 5,
+      "knowledgeCount": 0,
+      "connectionCount": 1,
+      "note": "protected — read-only routing checks only"
+    }
+  ],
+  "openQuestions": [
+    "city_builder_architecture_reference.md §3: Team = free+mid, Council = free+mid+premium; код agent-selection.ts: Team = free+cheap, Council = free+cheap+mid. Какой эталон верный?",
+    "Debate жёстко привязан к City Hall «Совет города», а не к t_ chamber — полный цикл спора нельзя изолировать на t_ сущностях без изменения кода.",
+    "classifyTechDepartmentIntent для текста без diagnose/structure ключей возвращает diagnose (не unknown) — это задокументировано только в коде, не в architecture_reference."
+  ],
+  "results": [
+    {
+      "category": "Mayor routing",
+      "name": "structure_command keyword",
+      "expected": "target=a1000000-0000-4000-8000-000000000001; matchedBy=structure_command",
+      "actual": "action=delegate, matchedBy=structure_command, target=a1000000-0000-4000-8000-000000000001, conf=1",
+      "status": "PASS",
+      "notes": "Structure mutation command detected before semantic routing — delegate to Tech Department"
+    },
+    {
+      "category": "Mayor routing",
+      "name": "structure_command_llm slang",
+      "expected": "target=a1000000-0000-4000-8000-000000000001; matchedBy=structure_command_llm",
+      "actual": "action=delegate, matchedBy=structure_command_llm, target=a1000000-0000-4000-8000-000000000001, conf=1",
+      "status": "PASS",
+      "notes": "Structure mutation command detected by LLM semantic gate — delegate to Tech Department"
+    },
+    {
+      "category": "Mayor routing",
+      "name": "semantic lawyers",
+      "expected": "target=99a8efff-d39d-4130-8553-7dada4c07b1a; matchedBy=semantic",
+      "actual": "action=delegate, matchedBy=semantic, target=99a8efff-d39d-4130-8553-7dada4c07b1a, conf=0.8",
+      "status": "PASS",
+      "notes": "The user's question about a court date is related to legal matters, which is handled by the ЮРИСТЫ building."
+    },
+    {
+      "category": "Mayor routing",
+      "name": "explicit_name Citizly (read-only)",
+      "expected": "not a1000000-0000-4000-8000-000000000001; action=delegate",
+      "actual": "action=delegate, matchedBy=explicit_name, target=9afd85bf-ce54-4c8b-bc78-c2ff7fcd9a57, conf=1",
+      "status": "PASS",
+      "notes": "User explicitly mentioned the building name 'Citizly' in the context of a troubleshooting question"
+    },
+    {
+      "category": "Mayor routing",
+      "name": "diagnose not tech",
+      "expected": "not a1000000-0000-4000-8000-000000000001",
+      "actual": "action=delegate, matchedBy=explicit_name, target=9afd85bf-ce54-4c8b-bc78-c2ff7fcd9a57, conf=1",
+      "status": "PASS",
+      "notes": "User explicitly mentioned the building name 'Citizly' in the context of a troubleshooting question"
+    },
+    {
+      "category": "Mayor routing",
+      "name": "conflict topic+structure",
+      "expected": "target=a1000000-0000-4000-8000-000000000001; matchedBy=structure_command",
+      "actual": "action=delegate, matchedBy=structure_command, target=a1000000-0000-4000-8000-000000000001, conf=1",
+      "status": "PASS",
+      "notes": "Structure mutation command detected before semantic routing — delegate to Tech Department"
+    },
+    {
+      "category": "Mayor routing",
+      "name": "typo structure slang",
+      "expected": "target=a1000000-0000-4000-8000-000000000001",
+      "actual": "action=delegate, matchedBy=structure_command_llm, target=a1000000-0000-4000-8000-000000000001, conf=1",
+      "status": "PASS",
+      "notes": "Structure mutation command detected by LLM semantic gate — delegate to Tech Department"
+    },
+    {
+      "category": "Manager routing",
+      "name": "delegate t_Бухгалтерия",
+      "expected": "delegate → 9441321f",
+      "actual": "action=delegate target=9441321f-fafa-42ca-8eed-14c0867b4778 conf=0.9",
+      "status": "PASS",
+      "notes": "User request mentions 'отчёт', 'балансу' and 'налогам', which are related to accounting tasks"
+    },
+    {
+      "category": "Manager routing",
+      "name": "delegate t_Кружка",
+      "expected": "delegate → 06d19641",
+      "actual": "action=delegate target=06d19641-b4ea-4544-85f1-e9381599d26f conf=0.9",
+      "status": "PASS",
+      "notes": "User request mentions 'керамической кружки 300мл', which matches the description of the t_Кружка dep"
+    },
+    {
+      "category": "Manager routing",
+      "name": "answer_self no internal chambers",
+      "expected": "action=answer_self, trace no_internal_chambers",
+      "actual": "action=answer_self trace=no_internal_chambers",
+      "status": "PASS"
+    },
+    {
+      "category": "Manager routing",
+      "name": "conflict dual topic",
+      "expected": "delegate to one internal chamber OR answer_self with low confidence",
+      "actual": "action=delegate target=9441321f-fafa-42ca-8eed-14c0867b4778 conf=0.8",
+      "status": "AMBIGUOUS",
+      "notes": "Dual-topic routing is LLM-dependent; both outcomes may be valid"
+    },
+    {
+      "category": "Tech Department intent",
+      "name": "pure diagnose",
+      "expected": "diagnose",
+      "actual": "diagnose",
+      "status": "PASS"
+    },
+    {
+      "category": "Tech Department intent",
+      "name": "pure structure",
+      "expected": "structure",
+      "actual": "structure",
+      "status": "PASS"
+    },
+    {
+      "category": "Tech Department intent",
+      "name": "conflict diagnose wins",
+      "expected": "diagnose",
+      "actual": "diagnose",
+      "status": "PASS"
+    },
+    {
+      "category": "Tech Department intent",
+      "name": "conflict structure wins",
+      "expected": "structure",
+      "actual": "diagnose",
+      "status": "FAIL"
+    },
+    {
+      "category": "Tech Department intent",
+      "name": "unknown empty",
+      "expected": "unknown",
+      "actual": "unknown",
+      "status": "PASS"
+    },
+    {
+      "category": "Tech Department intent",
+      "name": "default diagnose",
+      "expected": "diagnose",
+      "actual": "diagnose",
+      "status": "PASS"
+    },
+    {
+      "category": "Knowledge",
+      "name": "matched entry full body in prompt",
+      "expected": "T_KNOWLEDGE_SECRET_CACTUS + doc excerpt present",
+      "actual": "cactus=true excerpt=true mugHidden=true",
+      "status": "PASS"
+    },
+    {
+      "category": "Knowledge",
+      "name": "unrelated task hides other bodies",
+      "expected": "no T_KNOWLEDGE_SECRET_CACTUS",
+      "actual": "hasCactus=false",
+      "status": "PASS"
+    },
+    {
+      "category": "Knowledge",
+      "name": "near 40k layer",
+      "expected": "prompt chars close to but below 40000",
+      "actual": "chars=54703 truncatedNotice=false",
+      "status": "PASS",
+      "notes": "Synthetic rows; exact threshold depends on match/open logic"
+    },
+    {
+      "category": "Knowledge",
+      "name": "over 40k catalog truncation",
+      "expected": "knowledge-truncated-notice ref present",
+      "actual": "refs=199 truncated=true",
+      "status": "PASS"
+    },
+    {
+      "category": "cost_tier",
+      "name": "full roster fast",
+      "expected": "no throw, required tier present",
+      "actual": "agents=1 tiers=free",
+      "status": "PASS"
+    },
+    {
+      "category": "cost_tier",
+      "name": "full roster team",
+      "expected": "no throw, required tier present",
+      "actual": "agents=2 tiers=free,cheap",
+      "status": "PASS"
+    },
+    {
+      "category": "cost_tier",
+      "name": "full roster council",
+      "expected": "no throw, required tier present",
+      "actual": "agents=3 tiers=free,cheap,mid",
+      "status": "PASS"
+    },
+    {
+      "category": "cost_tier",
+      "name": "full roster turbo",
+      "expected": "premium tier present",
+      "actual": "agents=4 tiers=free,cheap,mid,premium",
+      "status": "PASS",
+      "notes": "Turbo uses premium required tier per agent-selection.ts"
+    },
+    {
+      "category": "cost_tier",
+      "name": "free-only fast",
+      "expected": "success",
+      "actual": "ok",
+      "status": "PASS"
+    },
+    {
+      "category": "cost_tier",
+      "name": "free-only team should error",
+      "expected": "Error mentioning cheap",
+      "actual": "В этом отделе не настроены cheap-агенты, используйте другой режим",
+      "status": "PASS"
+    },
+    {
+      "category": "cost_tier",
+      "name": "free-only council should error",
+      "expected": "Error mentioning mid",
+      "actual": "В этом отделе не настроены mid-агенты, используйте другой режим",
+      "status": "PASS"
+    },
+    {
+      "category": "cost_tier",
+      "name": "free-only turbo should error",
+      "expected": "premium error",
+      "actual": "В этом отделе не настроены premium-агенты, используйте другой режим",
+      "status": "PASS"
+    },
+    {
+      "category": "Debate",
+      "name": "runAgentDebate",
+      "expected": "completes without throw",
+      "actual": "Chamber «Совет города» не найден в City Hall",
+      "status": "FAIL"
+    }
+  ]
+}
