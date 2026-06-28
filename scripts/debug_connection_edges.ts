@@ -8,10 +8,11 @@ import { workspaceAssignmentNodeId } from "../lib/workspace/agent-nodes";
 
 async function main() {
   const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const officeId = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
   const [officeRes, objectsRes, chambersRes, assignmentsRes, connectionsRes] =
     await Promise.all([
-      fetch(`${base}/api/offices/f47ac10b-58cc-4372-a567-0e02b2c3d479`),
-      fetch(`${base}/api/offices/f47ac10b-58cc-4372-a567-0e02b2c3d479/objects`),
+      fetch(`${base}/api/offices/${officeId}`),
+      fetch(`${base}/api/offices/${officeId}/objects`),
       fetch(`${base}/api/chambers`),
       fetch(`${base}/api/chambers/assignments`),
       fetch(`${base}/api/connections`),
@@ -34,7 +35,7 @@ async function main() {
   const meta = parseWorkspaceMeta(office.office?.workspace_meta);
   const cityName = office.office?.name ?? "AI Council";
 
-  const nodes = buildWorkspaceNodes(cityName, meta, buildings, chambersList, assignments);
+  const nodes = buildWorkspaceNodes(officeId, cityName, meta, buildings, chambersList, assignments);
   const chamberRegistryIds = new Set(
     chambersList.map((c) => c.entity_registry_id).filter(Boolean),
   );

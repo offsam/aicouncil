@@ -30,7 +30,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ConnectionMode, SelectionMode } from "@xyflow/system";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import { DEFAULT_BUILDING, DEFAULT_CHAMBER } from "@/lib/control-defaults";
 import type { AgentAssignmentRow, ChamberRow, ConnectionRoutePath, OfficeObjectRow } from "@/lib/office-types";
 import {
@@ -96,7 +95,6 @@ import {
   type WorkspaceConnectionRegistry,
   type WorkspaceConnectionRow,
 } from "@/lib/workspace/workspace-connections";
-import { TECH_DEPARTMENT_BUILDING_ID } from "@/lib/workspace/tech-department";
 import { normalizeVisibleTechCounters } from "@/lib/workspace/tech-department-counters";
 import {
   patchTechDepartmentInventoryNode,
@@ -180,7 +178,9 @@ const edgeTypes = {
   connection: ConnectionEdge,
 };
 
-const VIEWPORT_STORAGE_KEY = `workspace-viewport-${AI_COUNCIL_OFFICE_ID}`;
+function viewportStorageKey(officeId: string): string {
+  return `workspace-viewport-${officeId}`;
+}
 
 function edgeStyleForConnection(
   connectionId: string | undefined,
@@ -336,8 +336,13 @@ function FlowCenterToolbar({
   );
 }
 
-export function WorkspaceCanvas() {
-  const officeId = AI_COUNCIL_OFFICE_ID;
+export function WorkspaceCanvas({
+  officeId,
+  techDepartmentBuildingId,
+}: {
+  officeId: string;
+  techDepartmentBuildingId: string;
+}) {
   const { effectiveTheme } = useWorkspaceAppearance();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -684,7 +689,7 @@ export function WorkspaceCanvas() {
       });
       setNodes(
         normalizeNodesDimensions(
-          buildWorkspaceNodes(cityName, meta, buildings, chambers, assignments),
+          buildWorkspaceNodes(officeId, cityName, meta, buildings, chambers, assignments),
         ),
       );
     } catch (err) {
@@ -705,9 +710,14 @@ export function WorkspaceCanvas() {
     if (sig === techInventorySigRef.current) return;
     techInventorySigRef.current = sig;
     setNodes((nds) =>
-      patchTechDepartmentInventoryNode(nds, connections.length, poolAgentCountRef.current),
+      patchTechDepartmentInventoryNode(
+        nds,
+        connections.length,
+        poolAgentCountRef.current,
+        techDepartmentBuildingId,
+      ),
     );
-  }, [loading, nodes, connections.length, setNodes]);
+  }, [loading, nodes, connections.length, setNodes, techDepartmentBuildingId]);
 
   const removeConnectionFromCanvas = useCallback(
     (connectionId: string) => {
@@ -1219,7 +1229,7 @@ export function WorkspaceCanvas() {
   const [hasStoredViewport] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
-      return !!localStorage.getItem(VIEWPORT_STORAGE_KEY);
+      return !!localStorage.getItem(viewportStorageKey(officeId));
     } catch {
       return false;
     }
@@ -1908,6 +1918,7 @@ export function WorkspaceCanvas() {
             data: {
               label: object.label || `Building ${object.id.slice(0, 8)}`,
               buildingId: object.id,
+              officeId,
               isCityHall: cityHall,
               accentIndex,
               startEditing: options?.startEditing,
@@ -2014,6 +2025,7 @@ export function WorkspaceCanvas() {
               chamberId: chamber.id,
               buildingId,
               entityRegistryId: entityId,
+              officeId,
               agentCount: 0,
               startEditing: options?.startEditing,
             } satisfies ChamberNodeData,
@@ -2112,6 +2124,7 @@ export function WorkspaceCanvas() {
           assignment,
           chamberRegistryId: chamberNode.id,
           chamberDbId: chamberData.chamberId,
+          officeId,
           chamberWidthPx: chamberW,
           chamberHeightPx: chamberH,
           managerAgentId,
@@ -2660,7 +2673,7 @@ export function WorkspaceCanvas() {
       };
       setNodes((nds) =>
         nds.map((n) => {
-          if (n.id !== TECH_DEPARTMENT_BUILDING_ID) return n;
+          if (n.id !== techDepartmentBuildingId) return n;
           return {
             ...n,
             data: {
@@ -2731,7 +2744,7 @@ export function WorkspaceCanvas() {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         try {
-          localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(viewport));
+          localStorage.setItem(viewportStorageKey(officeId), JSON.stringify(viewport));
         } catch {
           /* ignore */
         }
@@ -3405,7 +3418,7 @@ export function WorkspaceCanvas() {
               ? (() => {
                   try {
                     return JSON.parse(
-                      localStorage.getItem(VIEWPORT_STORAGE_KEY) || "{}",
+                      localStorage.getItem(viewportStorageKey(officeId)) || "{}",
                     ) as { x: number; y: number; zoom: number };
                   } catch {
                     return { x: 0, y: 0, zoom: 0.85 };

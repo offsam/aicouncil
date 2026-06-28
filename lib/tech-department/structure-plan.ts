@@ -1,5 +1,5 @@
-import { AI_COUNCIL_OFFICE_ID } from "../ai-council-ids";
 import { getSupabaseAdmin } from "../supabase/admin";
+import { requireExternalEntryOfficeId } from "../workspace/graph-identity-required";
 import type { StructureAction, TechStructurePlan } from "./structure-types";
 
 async function callCheapLLM(prompt: string): Promise<string> {
@@ -128,6 +128,7 @@ function formatActionList(actions: StructureAction[]): string {
  */
 export async function createTechStructurePlan(taskText: string): Promise<TechStructurePlan> {
   const supabase = getSupabaseAdmin();
+  const officeId = await requireExternalEntryOfficeId();
 
   const [{ data: buildings }, { data: chambers }, { data: agents }] = await Promise.all([
     supabase
@@ -138,7 +139,7 @@ export async function createTechStructurePlan(taskText: string): Promise<TechStr
       .from("entity_registry")
       .select("id, name, slug, parent_entity_id, routing_description")
       .eq("entity_type", "chamber"),
-    supabase.from("agents").select("id, name, provider").eq("office_id", AI_COUNCIL_OFFICE_ID),
+    supabase.from("agents").select("id, name, provider").eq("office_id", officeId),
   ]);
 
   const prompt = `You are the Tech Department planner. The user wants to change system structure. Produce a JSON object ONLY:

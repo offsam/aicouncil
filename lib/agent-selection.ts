@@ -28,8 +28,6 @@ const SLUG_WORKFLOW_PREFERENCE: Record<string, number> = {
   gpt: 31,
 };
 
-const CITY_ID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
-
 export type SelectedAgent = {
   agentId: string;
   slug: string;

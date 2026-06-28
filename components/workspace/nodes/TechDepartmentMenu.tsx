@@ -7,7 +7,6 @@ import { useWorkspaceActions } from "@/components/workspace/WorkspaceActionsCont
 import { useWorkspaceLocale } from "@/components/workspace/WorkspaceLocaleContext";
 import { useWorkspaceSelection } from "@/components/workspace/WorkspaceSelectionContext";
 import { useWorkspaceOverlayLayer } from "@/components/workspace/WorkspaceOverlayContext";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import type { InspectorTarget } from "@/lib/workspace/inspector-target";
 import {
   TECH_DEPARTMENT_COUNTER_CATALOG,
@@ -19,6 +18,7 @@ import {
 } from "@/components/workspace/nodes/useZoomAnchoredMenuPosition";
 
 type TechDepartmentMenuProps = {
+  officeId: string;
   buildingId: string;
   label: string;
   visibleCounterIds: string[];
@@ -35,6 +35,7 @@ function TechMenuIcon() {
 }
 
 export function TechDepartmentMenu({
+  officeId,
   buildingId,
   label,
   visibleCounterIds,
@@ -81,7 +82,7 @@ export function TechDepartmentMenu({
 
   const inspectorTarget: InspectorTarget = {
     kind: "building",
-    officeId: AI_COUNCIL_OFFICE_ID,
+    officeId,
     buildingId,
     label,
   };

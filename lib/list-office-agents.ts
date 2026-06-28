@@ -1,11 +1,9 @@
-import { AGENT_DB_IDS, AI_COUNCIL_OFFICE_ID } from "./ai-council-ids";
 import type { AgentRow } from "./office-types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * All agents available in an office/city pool.
- * Includes agents with office_id set, entity_registry parent link, and (for AI Council)
- * the fixed seed roster even when office_id was cleared (e.g. after desk delete).
+ * Includes agents with office_id set and entity_registry parent link under the office.
  */
 export async function listOfficeAgents(
   supabase: SupabaseClient,
@@ -33,11 +31,6 @@ export async function listOfficeAgents(
   const extraIds = new Set<string>();
   for (const row of registryRows ?? []) {
     extraIds.add(row.id);
-  }
-  if (officeId === AI_COUNCIL_OFFICE_ID) {
-    for (const id of Object.values(AGENT_DB_IDS)) {
-      extraIds.add(id);
-    }
   }
 
   const knownIds = new Set((byOffice ?? []).map((a) => a.id));

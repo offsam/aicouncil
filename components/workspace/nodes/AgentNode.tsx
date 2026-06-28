@@ -8,7 +8,6 @@ import { WorkspaceNodeTooltip } from "@/components/workspace/nodes/WorkspaceNode
 import { AgentRobotAvatar } from "@/components/workspace/nodes/AgentRobotAvatar";
 import { useWorkspaceActions } from "@/components/workspace/WorkspaceActionsContext";
 import { useWorkspaceSelection } from "@/components/workspace/WorkspaceSelectionContext";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import type { AgentNodeData } from "@/lib/workspace/build-workspace-graph";
 import { AGENT_NODE_MAX_PX, AGENT_NODE_MIN_PX, clampAgentSizePx } from "@/lib/workspace/agent-layout";
 import type { InspectorTarget } from "@/lib/workspace/inspector-target";
@@ -34,7 +33,7 @@ function AgentNodeInner({ data, selected, parentId }: NodeProps) {
 
   const inspectorTarget: InspectorTarget = {
     kind: "agent",
-    officeId: snapshot?.officeId ?? AI_COUNCIL_OFFICE_ID,
+    officeId: snapshot?.officeId ?? d.officeId,
     assignmentId: d.assignmentId,
     agentId: d.agentId,
     chamberId: d.chamberDbId,

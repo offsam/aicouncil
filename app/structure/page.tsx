@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ControlShell } from "@/components/control/ControlShell";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import { DEFAULT_BUILDING, DEFAULT_CHAMBER } from "@/lib/control-defaults";
 import type { OfficeObjectRow, ChamberRow, RuleRow } from "@/lib/office-types";
 
@@ -21,7 +20,7 @@ type Assignment = {
 type AgentOption = { id: string; name: string };
 
 export default function StructurePage() {
-  const officeId = AI_COUNCIL_OFFICE_ID;
+  const [officeId, setOfficeId] = useState<string | null>(null);
   const [buildings, setBuildings] = useState<OfficeObjectRow[]>([]);
   const [expandedBuilding, setExpandedBuilding] = useState<string | null>(null);
   const [chambersByBuilding, setChambersByBuilding] = useState<
@@ -44,7 +43,18 @@ export default function StructurePage() {
   const [newKnowledgeTitle, setNewKnowledgeTitle] = useState("");
   const [newKnowledgeContent, setNewKnowledgeContent] = useState("");
 
+  useEffect(() => {
+    fetch("/api/workspace/office-id")
+      .then((r) => r.json())
+      .then((data: { officeId?: string; error?: string }) => {
+        if (data.officeId) setOfficeId(data.officeId);
+        else setError(data.error ?? "Office not resolved");
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Office not resolved"));
+  }, []);
+
   const loadBuildings = useCallback(async () => {
+    if (!officeId) return;
     const res = await fetch(`/api/offices/${officeId}/objects`);
     const data = (await res.json()) as { objects?: OfficeObjectRow[]; error?: string };
     if (!res.ok) throw new Error(data.error ?? "Не удалось загрузить здания");
@@ -52,6 +62,7 @@ export default function StructurePage() {
   }, [officeId]);
 
   const loadAgents = useCallback(async () => {
+    if (!officeId) return;
     const res = await fetch(`/api/offices/${officeId}`);
     const data = (await res.json()) as { agents?: AgentOption[]; error?: string };
     if (!res.ok) throw new Error(data.error ?? "Не удалось загрузить агентов");
@@ -89,6 +100,7 @@ export default function StructurePage() {
   }, []);
 
   useEffect(() => {
+    if (!officeId) return;
     (async () => {
       setLoading(true);
       setError(null);
@@ -100,7 +112,7 @@ export default function StructurePage() {
         setLoading(false);
       }
     })();
-  }, [loadBuildings, loadAgents]);
+  }, [loadBuildings, loadAgents, officeId]);
 
   async function handleCreateBuilding(e: React.FormEvent) {
     e.preventDefault();

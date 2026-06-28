@@ -9,7 +9,6 @@ import { WorkspaceNodeDragHandle } from "@/components/workspace/nodes/WorkspaceN
 import { WorkspaceNodeTooltip } from "@/components/workspace/nodes/WorkspaceNodeTooltip";
 import { useWorkspaceActions } from "@/components/workspace/WorkspaceActionsContext";
 import { useWorkspaceSelection } from "@/components/workspace/WorkspaceSelectionContext";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import { RouteStepBadge } from "@/components/workspace/RouteStepBadge";
 import type { ChamberNodeData } from "@/lib/workspace/build-workspace-graph";
 import { buildingAccentCssVars } from "@/lib/workspace/building-accent";
@@ -32,7 +31,7 @@ function ChamberNodeInner({ data, selected }: NodeProps) {
 
   const inspectorTarget: InspectorTarget = {
     kind: "chamber",
-    officeId: snapshot?.officeId ?? AI_COUNCIL_OFFICE_ID,
+    officeId: snapshot?.officeId ?? d.officeId,
     buildingId: d.buildingId,
     chamberId: d.chamberId,
     registryId: d.entityRegistryId,
@@ -85,7 +84,7 @@ function ChamberNodeInner({ data, selected }: NodeProps) {
   function chamberMenuTarget() {
     return {
       kind: "chamber" as const,
-      officeId: AI_COUNCIL_OFFICE_ID,
+      officeId: d.officeId,
       buildingId: d.buildingId,
       chamberId: d.chamberId,
       registryId: d.entityRegistryId,

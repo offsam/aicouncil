@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AI_COUNCIL_OFFICE_ID, resolveAgentDbId } from "@/lib/ai-council-ids";
+import { resolveAgentDbId } from "@/lib/ai-council-ids";
 import { getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/admin";
 import type { LogStatus } from "@/lib/office-types";
+import { requireWorkspaceOfficeId } from "@/lib/workspace/resolve-workspace-office-id";
 
 interface AgentLogInput {
   slug: string;
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as RequestLogsBody;
     const question = body.question?.trim();
-    const officeId = body.office_id?.trim() || AI_COUNCIL_OFFICE_ID;
+    const officeId = await requireWorkspaceOfficeId(body.office_id);
 
     if (!question) {
       return NextResponse.json({ error: "question обязателен" }, { status: 400 });

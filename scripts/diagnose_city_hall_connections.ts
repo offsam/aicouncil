@@ -109,6 +109,7 @@ async function main() {
   }
 
   const nodes = buildWorkspaceNodes(
+    AI_COUNCIL_OFFICE_ID,
     "AI Council",
     meta as never,
     visibleBuildings,

@@ -32,6 +32,7 @@ export type CityHallNodeData = {
 export type BuildingNodeData = {
   label: string;
   buildingId: string;
+  officeId: string;
   isCityHall?: boolean;
   accentIndex?: number;
   highlighted?: boolean;
@@ -69,6 +70,7 @@ export type ChamberNodeData = {
   chamberId: string;
   buildingId: string;
   entityRegistryId: string;
+  officeId: string;
   accentIndex?: number;
   highlighted?: boolean;
   startEditing?: boolean;
@@ -96,6 +98,7 @@ export type AgentNodeData = {
   assignmentId: string;
   agentId: string;
   chamberDbId: string;
+  officeId: string;
   provider: string;
   modelId: string;
   costTier: string;
@@ -131,6 +134,7 @@ export function buildAgentAssignmentNode(params: {
   assignment: AgentAssignmentRow;
   chamberRegistryId: string;
   chamberDbId: string;
+  officeId: string;
   chamberWidthPx: number;
   chamberHeightPx: number;
   managerAgentId?: string | null;
@@ -182,6 +186,7 @@ export function buildAgentAssignmentNode(params: {
       assignmentId: params.assignment.id,
       agentId: params.assignment.agent_id,
       chamberDbId: params.chamberDbId,
+      officeId: params.officeId,
       provider: agent.provider,
       modelId: agent.model_id,
       costTier: normalizeCostTier(agent.cost_tier),
@@ -205,6 +210,7 @@ export function buildAgentAssignmentNode(params: {
 }
 
 export function buildWorkspaceNodes(
+  officeId: string,
   cityName: string,
   workspaceMeta: WorkspaceMeta,
   buildings: OfficeObjectRow[],
@@ -261,6 +267,7 @@ export function buildWorkspaceNodes(
         data: {
         label: b.label || (cityHall ? "City Hall" : `Building ${b.id.slice(0, 8)}`),
         buildingId: b.id,
+        officeId,
         isCityHall: cityHall,
         accentIndex,
         chamberCount: buildingChambers.length,
@@ -329,6 +336,7 @@ export function buildWorkspaceNodes(
           chamberId: c.id,
           buildingId: b.id,
           entityRegistryId: registryId,
+          officeId,
           accentIndex: chamberAccentIndex,
           agentCount: (assignmentsByChamber.get(c.id) ?? []).length,
           isMainChamber: c.routing_role === "main",
@@ -360,6 +368,7 @@ export function buildWorkspaceNodes(
         assignment,
         chamberRegistryId: registryId,
         chamberDbId: c.id,
+        officeId,
         chamberWidthPx: chamberLayout.width,
         chamberHeightPx: chamberLayout.height,
         managerAgentId,

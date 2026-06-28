@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ControlShell } from "@/components/control/ControlShell";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import { normalizeCostTier } from "@/lib/cost-tier";
 
 type AgentRow = {
@@ -27,7 +26,7 @@ type AssignmentRow = {
 };
 
 export default function AgentsPage() {
-  const officeId = AI_COUNCIL_OFFICE_ID;
+  const [officeId, setOfficeId] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [assignmentsByChamber, setAssignmentsByChamber] = useState<
     Record<string, AssignmentRow[]>
@@ -40,7 +39,18 @@ export default function AgentsPage() {
   const [addAgentId, setAddAgentId] = useState<string | null>(null);
   const [addChamberId, setAddChamberId] = useState("");
 
+  useEffect(() => {
+    fetch("/api/workspace/office-id")
+      .then((r) => r.json())
+      .then((data: { officeId?: string; error?: string }) => {
+        if (data.officeId) setOfficeId(data.officeId);
+        else setError(data.error ?? "Office not resolved");
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Office not resolved"));
+  }, []);
+
   const load = useCallback(async () => {
+    if (!officeId) return;
     setLoading(true);
     setError(null);
     try {
@@ -101,8 +111,9 @@ export default function AgentsPage() {
   }, [officeId]);
 
   useEffect(() => {
+    if (!officeId) return;
     load();
-  }, [load]);
+  }, [load, officeId]);
 
   const agentChambers = useMemo(() => {
     const byAgent = new Map<string, { assignmentId: string; info: ChamberInfo }[]>();

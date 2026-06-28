@@ -1,7 +1,7 @@
-import { AI_COUNCIL_OFFICE_ID } from "../ai-council-ids";
 import { seedDefaultChamberRoster } from "../chamber-default-roster";
 import { ensureBuildingRegistry, resolveUniqueChamberSlug, validateConnectionEntities } from "../entity-registry-ensure";
 import { getSupabaseAdmin } from "../supabase/admin";
+import { requireExternalEntryOfficeId } from "../workspace/graph-identity-required";
 import { NEW_CONNECTION_PERMISSIONS } from "../workspace/workspace-connections";
 import type {
   StructureAction,
@@ -25,12 +25,13 @@ function resolveRef(ref: string, refMap: Map<string, string>): string {
 async function executeCreateBuilding(
   action: Extract<StructureAction, { type: "create_building" }>,
   refMap: Map<string, string>,
+  officeId: string,
 ): Promise<string> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("office_objects")
     .insert({
-      office_id: AI_COUNCIL_OFFICE_ID,
+      office_id: officeId,
       object_type: "room",
       position_x: action.position_x ?? 20,
       position_z: action.position_z ?? 20,
@@ -52,7 +53,7 @@ async function executeCreateBuilding(
       id: data.id,
       label: data.label,
       routing_description: action.routing_description,
-      office_id: AI_COUNCIL_OFFICE_ID,
+      office_id: officeId,
     },
     undefined,
   );
@@ -257,6 +258,7 @@ export async function executeTechStructurePlan(planId: string): Promise<Structur
   }
 
   const supabase = getSupabaseAdmin();
+  const officeId = await requireExternalEntryOfficeId();
   const refMap = new Map<string, string>();
   const executed: StructureExecutionResult["executed"] = [];
   const sorted = sortActionsForExecution(plan.actions);
@@ -266,7 +268,7 @@ export async function executeTechStructurePlan(planId: string): Promise<Structur
     try {
       let detail = "ok";
       if (action.type === "create_building") {
-        const id = await executeCreateBuilding(action, refMap);
+        const id = await executeCreateBuilding(action, refMap, officeId);
         detail = `building id=${id}`;
       } else if (action.type === "create_chamber") {
         const id = await executeCreateChamber(action, refMap);

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDebateTierMode } from "@/lib/debate/types";
 import { runAgentDebate } from "@/lib/debate/run-agent-debate";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import { resolveCityHallMainAgent } from "@/lib/workspace/city-hall-orchestrator";
+import { requireWorkspaceOfficeId } from "@/lib/workspace/resolve-workspace-office-id";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 
 export async function POST(request: NextRequest) {
@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
       sourceEntityId?: string;
       callerKind?: "mayor" | "chamber_manager";
       tierMode?: unknown;
+      officeId?: string;
     };
 
     const question = (body.taskText || body.question || "").trim();
@@ -27,10 +28,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "tierMode обязателен и должен быть валидным" }, { status: 400 });
     }
 
+    const officeId = await requireWorkspaceOfficeId(body.officeId);
     const callerKind = body.callerKind === "chamber_manager" ? "chamber_manager" : "mayor";
     let callerEntityId = body.sourceEntityId?.trim();
     if (!callerEntityId) {
-      const mayor = await resolveCityHallMainAgent(AI_COUNCIL_OFFICE_ID);
+      const mayor = await resolveCityHallMainAgent(officeId);
       if (!mayor?.chamberRegistryId) {
         return NextResponse.json(
           { error: "Не найден Mayor chamber (routing_role=main) в City Hall" },

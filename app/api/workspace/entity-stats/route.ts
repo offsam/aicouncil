@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import { getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/admin";
+import { requireWorkspaceOfficeId } from "@/lib/workspace/resolve-workspace-office-id";
 
 /** Cap rows loaded for aggregate stats (recent window, not full history). */
 const STATS_LOGS_FETCH_LIMIT = 500;
@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = request.nextUrl;
   const scope = searchParams.get("scope");
-  const officeId = searchParams.get("officeId")?.trim() || AI_COUNCIL_OFFICE_ID;
+  const officeId = await requireWorkspaceOfficeId(searchParams.get("officeId"));
   const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? 20), 1), 100);
 
   try {

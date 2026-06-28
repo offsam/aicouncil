@@ -9,7 +9,6 @@ import { WorkspaceNodeDragHandle } from "@/components/workspace/nodes/WorkspaceN
 import { WorkspaceNodeTooltip } from "@/components/workspace/nodes/WorkspaceNodeTooltip";
 import { useWorkspaceActions } from "@/components/workspace/WorkspaceActionsContext";
 import { useWorkspaceSelection } from "@/components/workspace/WorkspaceSelectionContext";
-import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
 import { RouteStepBadge } from "@/components/workspace/RouteStepBadge";
 import type { BuildingNodeData } from "@/lib/workspace/build-workspace-graph";
 import { buildingAccentCssVars } from "@/lib/workspace/building-accent";
@@ -75,7 +74,7 @@ function BuildingNodeInner({ data, selected }: NodeProps) {
   function buildingMenuTarget() {
     return {
       kind: "building" as const,
-      officeId: AI_COUNCIL_OFFICE_ID,
+      officeId: d.officeId,
       buildingId: d.buildingId,
       label: d.label,
       accentIndex: d.accentIndex,
@@ -85,7 +84,7 @@ function BuildingNodeInner({ data, selected }: NodeProps) {
 
   const inspectorTarget: InspectorTarget = {
     kind: "building",
-    officeId: snapshot?.officeId ?? AI_COUNCIL_OFFICE_ID,
+    officeId: snapshot?.officeId ?? d.officeId,
     buildingId: d.buildingId,
     label: d.label,
   };
