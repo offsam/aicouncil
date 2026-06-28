@@ -14,7 +14,13 @@ import { WorkspaceTopMissionBar } from "@/components/workspace/WorkspaceTopMissi
 import { WorkspaceBottomActivityLog } from "@/components/workspace/WorkspaceBottomActivityLog";
 import { WorkspaceTaskToastHost } from "@/components/workspace/WorkspaceTaskToastHost";
 
-function WorkspaceLayout() {
+function WorkspaceLayout({
+  officeId,
+  techDepartmentBuildingId,
+}: {
+  officeId: string;
+  techDepartmentBuildingId: string;
+}) {
   return (
     <div className="workspace-shell flex h-screen flex-col overflow-hidden bg-[var(--ws-shell-bg)]">
       <WorkspaceTopMissionBar />
@@ -23,7 +29,10 @@ function WorkspaceLayout() {
         <div className="flex h-full min-h-0 min-w-0">
           <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <ReactFlowProvider>
-              <WorkspaceCanvas />
+              <WorkspaceCanvas
+                officeId={officeId}
+                techDepartmentBuildingId={techDepartmentBuildingId}
+              />
             </ReactFlowProvider>
             <WorkspaceTaskToastHost />
             <WorkspaceMayorChat />
@@ -37,7 +46,13 @@ function WorkspaceLayout() {
   );
 }
 
-export function WorkspaceShell() {
+export function WorkspaceShell({
+  officeId,
+  techDepartmentBuildingId,
+}: {
+  officeId: string;
+  techDepartmentBuildingId: string;
+}) {
   return (
     <WorkspaceLocaleProvider>
       <WorkspaceSelectionProvider>
@@ -45,7 +60,10 @@ export function WorkspaceShell() {
           <WorkspaceExecutionModeProvider>
             <WorkspaceAppearanceProvider>
               <WorkspaceChatProvider>
-                <WorkspaceLayout />
+                <WorkspaceLayout
+                  officeId={officeId}
+                  techDepartmentBuildingId={techDepartmentBuildingId}
+                />
               </WorkspaceChatProvider>
             </WorkspaceAppearanceProvider>
           </WorkspaceExecutionModeProvider>
