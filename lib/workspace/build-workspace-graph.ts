@@ -244,7 +244,7 @@ export function buildWorkspaceNodes(
   for (const b of buildings) {
     if (b.object_type !== "room") continue;
     const cityHall = isCityHallBuilding(b);
-    const techDept = isTechDepartmentBuilding(b.label);
+    const techDept = isTechDepartmentBuilding(b.label, b.building_role);
     const sizeW = b.size_w ?? (cityHall ? 12 : 8);
     const sizeD = b.size_d ?? (cityHall ? 10 : 6);
     const layout = buildingToFlowNode(b.position_x, b.position_z, sizeW, sizeD);

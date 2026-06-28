@@ -93,6 +93,7 @@ export interface OfficeObjectRow {
   size_w: number | null;
   size_d: number | null;
   label: string | null;
+  building_role?: string | null;
   created_at: string;
   agents?: AgentRow | null;
 }

@@ -9,7 +9,10 @@ import { flowNodeToBuildingCenter } from "./coords";
 
 export const CITY_HALL_BUILDING_LABEL = "City Hall";
 
-export function isCityHallBuilding(row: Pick<OfficeObjectRow, "label">): boolean {
+export function isCityHallBuilding(
+  row: Pick<OfficeObjectRow, "label"> & { building_role?: string | null },
+): boolean {
+  if (row.building_role === "city_hall") return true;
   return row.label?.trim() === CITY_HALL_BUILDING_LABEL;
 }
 

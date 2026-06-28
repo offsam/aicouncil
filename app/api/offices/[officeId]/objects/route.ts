@@ -33,6 +33,21 @@ export async function GET(_request: Request, { params }: RouteParams) {
       agents: row.agents ? withComputedStatus(row.agents as AgentRow) : null,
     }));
 
+    const roomIds = objects.filter((o) => o.object_type === "room").map((o) => o.id);
+    if (roomIds.length > 0) {
+      const { data: roleRows } = await supabase
+        .from("entity_registry")
+        .select("id, building_role")
+        .in("id", roomIds);
+      const roleById = new Map((roleRows ?? []).map((r) => [r.id, r.building_role]));
+      for (const obj of objects) {
+        if (obj.object_type === "room") {
+          (obj as { building_role?: string | null }).building_role =
+            roleById.get(obj.id) ?? null;
+        }
+      }
+    }
+
     const { data: officeRow } = await supabase
       .from("offices")
       .select("name")
