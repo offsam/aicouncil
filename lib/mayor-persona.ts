@@ -29,7 +29,7 @@ Routing rules:
 - matchedBy: "explicit_name" if the user named the building/project; otherwise "semantic".
 - confidence: 0.0–1.0 (your certainty in the routing choice).
 
-Output contract — respond with ONE JSON object only (no markdown fences):
+Output contract — respond with ONE JSON object only (no markdown fences, no prose before/after):
 {
   "routing": {
     "action": "answer_self" | "delegate",
@@ -40,7 +40,13 @@ Output contract — respond with ONE JSON object only (no markdown fences):
     "trace": ["<step>", "..."]
   },
   "answer": "<full user-facing reply when action is answer_self; null when delegate>"
-}`;
+}
+
+Examples:
+- User: «кто ты» / «ты кто» → {"routing":{"action":"answer_self","matchedBy":"semantic","confidence":1,"reasoning":"Identity question","trace":["mayor_agent"]},"answer":"Я — Мэр, исполнительный директор AI-офиса."}
+- User asks about a building by name → delegate with target UUID and "answer": null
+
+Critical: even simple identity or greeting questions MUST use this JSON shape — never reply with plain text only.`;
 
 /** Combined system prompt: routing authority + answer when answer_self. */
 export function buildMayorExecutiveSystemPrompt(

@@ -77,11 +77,51 @@ function extractJsonObject(rawText: string): unknown {
   const trimmed = rawText.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = (fenced?.[1] ?? trimmed).trim();
+
   const jsonMatch = candidate.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error("No JSON object found in Mayor response");
   }
-  return JSON.parse(jsonMatch[0]);
+
+  try {
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    // Truncated or slightly malformed JSON — try to salvage routing + answer fields
+    const salvaged = salvageMayorEnvelopeJson(jsonMatch[0]);
+    if (salvaged) return salvaged;
+    throw new Error("Invalid JSON in Mayor response");
+  }
+}
+
+/** Best-effort extraction when the model truncates closing braces/quotes. */
+function salvageMayorEnvelopeJson(fragment: string): Record<string, unknown> | null {
+  const actionMatch = fragment.match(/"action"\s*:\s*"(answer_self|delegate)"/);
+  if (!actionMatch) return null;
+
+  const action = actionMatch[1];
+  const result: Record<string, unknown> = {
+    routing: { action, matchedBy: "semantic", confidence: 0.8, reasoning: "salvaged", trace: ["mayor_agent", "json_salvage"] },
+  };
+
+  const targetMatch = fragment.match(/"target"\s*:\s*"([0-9a-f-]{36})"/i);
+  if (targetMatch) {
+    (result.routing as Record<string, unknown>).target = targetMatch[1];
+  }
+
+  const answerMatch = fragment.match(/"answer"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (answerMatch) {
+    result.answer = answerMatch[1]!.replace(/\\"/g, '"').replace(/\\n/g, "\n");
+  }
+
+  return result;
+}
+
+function looksLikePlainTextAnswer(rawText: string): boolean {
+  const trimmed = rawText.trim();
+  if (!trimmed || trimmed.startsWith("{")) return false;
+  if (/^```/.test(trimmed)) return false;
+  if (trimmed.length < 4) return false;
+  return /[\u0400-\u04FFa-zA-Z]/.test(trimmed);
 }
 
 function routingFieldsFromParsed(parsed: Record<string, unknown>): MayorRoutingDecision {
@@ -135,6 +175,20 @@ export function parseMayorAgentRoutingEnvelope(
     return { decision, answer };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
+    if (looksLikePlainTextAnswer(rawText)) {
+      return {
+        decision: {
+          action: "answer_self",
+          matchedBy: "semantic",
+          confidence: 1,
+          reasoning: "Plain-text Mayor response treated as direct answer",
+          trace: ["mayor_agent", "plain_text_fallback"],
+        },
+        answer: rawText.trim(),
+      };
+    }
+
     return {
       decision: {
         action: "answer_self",

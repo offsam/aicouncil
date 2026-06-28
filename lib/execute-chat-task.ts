@@ -1169,6 +1169,7 @@ async function executeMayorTask(
         },
         systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows),
         forceError: options?.forceMayorInvokeError,
+        maxTokens: 4096,
       });
 
       governmentFallback = invoked.governmentFallback;

@@ -86,10 +86,19 @@ async function main() {
     answer: answerParsed.answer,
   });
 
-  const badParsed = parseMayorAgentRoutingEnvelope("not json at all", BUILDINGS);
+  const badParsed = parseMayorAgentRoutingEnvelope("{ invalid json", BUILDINGS);
   record("parse error → user message", badParsed.decision.trace.includes("parse_error") && Boolean(badParsed.answer), {
     trace: badParsed.decision.trace,
     answerPreview: badParsed.answer?.slice(0, 80),
+  });
+
+  const plainParsed = parseMayorAgentRoutingEnvelope(
+    "Я являюсь исполняющим обязанности мэра AI-офиса.",
+    BUILDINGS,
+  );
+  record("plain text → answer_self fallback", plainParsed.decision.trace.includes("plain_text_fallback") && plainParsed.answer?.includes("мэра"), {
+    trace: plainParsed.decision.trace,
+    answer: plainParsed.answer,
   });
 
   const lowConf = await finalizeMayorRoutingDecision(
