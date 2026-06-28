@@ -21,6 +21,7 @@ export async function invokeChamberAgentWithFreeFallback(params: {
   primaryAgent?: SelectedAgent;
   systemPromptPrefix?: string | null;
   maxTokens?: number;
+  conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
 }): Promise<ChamberInvokeResult> {
   const primary =
     params.primaryAgent ??
@@ -38,6 +39,7 @@ export async function invokeChamberAgentWithFreeFallback(params: {
       forceError: params.forceError,
       systemPromptPrefix: params.systemPromptPrefix,
       maxTokens: params.maxTokens,
+      conversationHistory: params.conversationHistory,
     });
     return { answer, agent: primary, governmentFallback: false };
   } catch (primaryErr) {
@@ -58,6 +60,7 @@ export async function invokeChamberAgentWithFreeFallback(params: {
         question: params.question,
         systemPromptPrefix: params.systemPromptPrefix,
         maxTokens: params.maxTokens,
+        conversationHistory: params.conversationHistory,
       });
       console.info(
         `[chamber-fallback] chamber=${params.chamberRegistryId} primary=${primary.slug} failed → reserve=${reserve.slug} (free)`,

@@ -6,6 +6,7 @@ export type MayorChatRequest = {
   taskText: string;
   targetAgentId: string;
   directTargetEntityId: string;
+  conversationId?: string;
 };
 
 export async function postMayorChatViaApi(
@@ -20,6 +21,7 @@ export async function postMayorChatViaApi(
       targetAgentId: payload.targetAgentId,
       directTargetEntityId: payload.directTargetEntityId,
       executionMode: "fast",
+      conversationId: payload.conversationId,
     }),
   });
 

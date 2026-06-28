@@ -21,6 +21,8 @@ export type InvokeAgentParams = {
   systemPromptPrefix?: string | null;
   /** Override max output tokens (e.g. Mayor JSON envelope). */
   maxTokens?: number;
+  /** Prior user/assistant turns in the same conversation (Mayor memory). */
+  conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
 };
 
 /**
@@ -58,6 +60,7 @@ export async function invokeAgentForWorkflow(params: InvokeAgentParams): Promise
     systemPrompt,
     question: params.question,
     maxTokens: params.maxTokens,
+    conversationHistory: params.conversationHistory,
   });
 }
 

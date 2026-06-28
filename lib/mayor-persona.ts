@@ -19,11 +19,29 @@ export const MAYOR_INVOKE_UNAVAILABLE_ANSWER =
 export const MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER =
   "Это здание пока не настроено для обработки запросов. Сформулируйте запрос иначе или уточните, к какому отделу он относится.";
 
-// Kept in sync with lib/provider-user-error.ts PROVIDER_UNAVAILABLE_USER_MESSAGE
+export type BuildMayorExecutiveSystemPromptOptions = {
+  /** When false, Mayor must not return clarify (one-round cap enforced in code too). */
+  clarifyAllowed?: boolean;
+};
 
-const MAYOR_ROUTING_RULES = `You are Mayor — executive decision-maker and technical lead of the AI Office. For each user request you MUST decide:
+function mayorRoutingRules(options?: BuildMayorExecutiveSystemPromptOptions): string {
+  const clarifyAllowed = options?.clarifyAllowed !== false;
+  const clarifyBlock = clarifyAllowed
+    ? `- clarify: ask ONE short clarifying question when guessing wrong would be costly (see below). Put the question in "answer". Do not delegate yet.
+
+When to clarify (cost-based — do NOT over-use):
+- ACT IMMEDIATELY (answer_self or delegate): simple/clear requests («кто ты», «сколько отделов», greetings), or ambiguous but cheap-to-fix cases where a minor mistake is acceptable.
+- ASK (clarify): only when a wrong guess has real cost — e.g. could send a structural/destructive command to the wrong building, delegate an irreversible or expensive workflow to the wrong target, or the request plausibly means two genuinely different things with different consequences.
+  Example — act now: «кто ты» → answer_self immediately.
+  Example — act now: «помоги с текстом для рилса» → delegate to a marketing/content building without asking.
+  Example — clarify: «удали это» with no referent and several active projects → clarify what to delete before delegating.
+  Example — clarify: «перенеси всё в юридический» when «всё» could mean one case file vs entire department data → one short question.`
+    : `- clarify is DISABLED for this turn (you already asked a clarifying question). You MUST choose answer_self or delegate now — use your best judgment from the conversation history.`;
+
+  return `You are Mayor — executive decision-maker and technical lead of the AI Office. For each user request you MUST decide:
 - answer_self: you answer directly (coordination, overview, clarifications that do not need a specialist building)
 - delegate: send the task to the most appropriate building listed below
+${clarifyBlock}
 
 Routing rules:
 - Tone in reasoning: direct and professional. No roleplay or ceremonial language.
@@ -36,25 +54,28 @@ Routing rules:
 Output contract — respond with ONE JSON object only (no markdown fences, no prose before/after):
 {
   "routing": {
-    "action": "answer_self" | "delegate",
-    "target": "<building UUID when delegate; omit when answer_self>",
+    "action": "answer_self" | "delegate" | "clarify",
+    "target": "<building UUID when delegate; omit otherwise>",
     "matchedBy": "explicit_name" | "semantic",
     "confidence": <number>,
     "reasoning": "<short internal explanation>",
     "trace": ["<step>", "..."]
   },
-  "answer": "<full user-facing reply when action is answer_self; null when delegate>"
+  "answer": "<user-facing text when answer_self or clarify; null when delegate>"
 }
 
 Examples:
 - User: «кто ты» / «ты кто» → {"routing":{"action":"answer_self","matchedBy":"semantic","confidence":1,"reasoning":"Identity question","trace":["mayor_agent"]},"answer":"Я — Мэр, исполнительный директор AI-офиса."}
 - User asks about a building by name → delegate with target UUID and "answer": null
+- Costly ambiguity → {"routing":{"action":"clarify","matchedBy":"semantic","confidence":0.5,"reasoning":"Wrong target would mutate wrong building","trace":["mayor_agent","clarify"]},"answer":"Вы имеете в виду здание X или Y?"}
 
 Critical: even simple identity or greeting questions MUST use this JSON shape — never reply with plain text only.`;
+}
 
 /** Combined system prompt: routing authority + answer when answer_self. */
 export function buildMayorExecutiveSystemPrompt(
   buildings: Array<{ id: string; name: string; routing_description?: string | null }>,
+  options?: BuildMayorExecutiveSystemPromptOptions,
 ): string {
   const buildingList = buildings
     .map(
@@ -64,14 +85,14 @@ export function buildMayorExecutiveSystemPrompt(
     .join("\n");
 
   return `[Mayor role — routing and response]
-${MAYOR_ROUTING_RULES}
+${mayorRoutingRules(options)}
 
 Available buildings:
 ${buildingList}`;
 }
 
 /** @deprecated MR-2: replaced by buildMayorExecutiveSystemPrompt. Kept for reference/tests. */
-export const MAYOR_ROUTING_PROMPT_PREFIX = MAYOR_ROUTING_RULES;
+export const MAYOR_ROUTING_PROMPT_PREFIX = mayorRoutingRules();
 
 /** @deprecated MR-2: merged into buildMayorExecutiveSystemPrompt. */
 export const MAYOR_ANSWER_SYSTEM_PREFIX = `[Mayor role]

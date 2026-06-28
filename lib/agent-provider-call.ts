@@ -1,4 +1,4 @@
-import { parseAnthropicError, parseOpenAIError } from "./api-types";
+import { parseAnthropicError, parseDeepSeekError, parseOpenAIError } from "./api-types";
 import { callGeminiConfiguredModel } from "./gemini-models";
 import { callGroqConfiguredModel, type GroqMessage } from "./groq-models";
 import { callOpenRouterConfiguredModel } from "./openrouter-free";
@@ -10,11 +10,40 @@ type AgentProviderCallParams = {
   systemPrompt: string;
   question: string;
   maxTokens?: number;
+  /** Prior user/assistant turns for the same conversation (excludes current question). */
+  conversationHistory?: MayorConversationTurn[];
 };
 
-function chatMessages(systemPrompt: string, question: string): GroqMessage[] {
+type MayorConversationTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+function providerMessages(
+  systemPrompt: string,
+  question: string,
+  conversationHistory: MayorConversationTurn[] = [],
+): GroqMessage[] {
+  const historyMessages = conversationHistory.map((turn) => ({
+    role: turn.role,
+    content: turn.content,
+  }));
   return [
     ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
+    ...historyMessages,
+    { role: "user" as const, content: question },
+  ];
+}
+
+function anthropicMessages(
+  question: string,
+  conversationHistory: MayorConversationTurn[] = [],
+): Array<{ role: "user" | "assistant"; content: string }> {
+  return [
+    ...conversationHistory.map((turn) => ({
+      role: turn.role,
+      content: turn.content,
+    })),
     { role: "user" as const, content: question },
   ];
 }
@@ -24,6 +53,7 @@ async function callAnthropicConfigured(
   systemPrompt: string,
   question: string,
   maxTokens: number,
+  conversationHistory: MayorConversationTurn[] = [],
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -41,7 +71,7 @@ async function callAnthropicConfigured(
       model: modelId,
       max_tokens: maxTokens,
       system: systemPrompt || undefined,
-      messages: [{ role: "user", content: question }],
+      messages: anthropicMessages(question, conversationHistory),
     }),
   });
 
@@ -69,6 +99,7 @@ async function callOpenAIConfigured(
   systemPrompt: string,
   question: string,
   maxTokens: number,
+  conversationHistory: MayorConversationTurn[] = [],
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -84,10 +115,10 @@ async function callOpenAIConfigured(
     body: JSON.stringify({
       model: modelId,
       max_tokens: maxTokens,
-      messages: [
-        ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-        { role: "user", content: question },
-      ],
+      messages: providerMessages(systemPrompt, question, conversationHistory).map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
     }),
   });
 
@@ -105,28 +136,96 @@ async function callOpenAIConfigured(
   return answer;
 }
 
+async function callDeepSeekConfigured(
+  modelId: string,
+  systemPrompt: string,
+  question: string,
+  maxTokens: number,
+  conversationHistory: MayorConversationTurn[] = [],
+): Promise<string> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) {
+    throw new ProviderInvokeError("deepseek", modelId, "DEEPSEEK_API_KEY missing");
+  }
+
+  const response = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: modelId,
+      max_tokens: maxTokens,
+      messages: providerMessages(systemPrompt, question, conversationHistory).map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new ProviderInvokeError(
+      "deepseek",
+      modelId,
+      parseDeepSeekError(response.status, data),
+    );
+  }
+
+  const answer = (
+    data as { choices?: Array<{ message?: { content?: string | null } }> }
+  ).choices?.[0]?.message?.content?.trim();
+  if (!answer) {
+    throw new ProviderInvokeError("deepseek", modelId, "DeepSeek returned empty answer");
+  }
+  return answer;
+}
+
 /**
  * Invoke the agent's configured provider/model only — no slug-based substitution
  * and no silent multi-model fallback pools (Workspace Runtime Transparency).
  */
 export async function callConfiguredAgentProvider(params: AgentProviderCallParams): Promise<string> {
   const maxTokens = params.maxTokens ?? 2048;
-  const { config, systemPrompt, question } = params;
+  const { config, systemPrompt, question, conversationHistory = [] } = params;
   const provider = config.provider;
 
   if (provider === "anthropic") {
-    return callAnthropicConfigured(config.modelId, systemPrompt, question, maxTokens);
+    return callAnthropicConfigured(
+      config.modelId,
+      systemPrompt,
+      question,
+      maxTokens,
+      conversationHistory,
+    );
   }
 
   if (provider === "openai") {
-    return callOpenAIConfigured(config.modelId, systemPrompt, question, maxTokens);
+    return callOpenAIConfigured(
+      config.modelId,
+      systemPrompt,
+      question,
+      maxTokens,
+      conversationHistory,
+    );
+  }
+
+  if (provider === "deepseek") {
+    return callDeepSeekConfigured(
+      config.modelId,
+      systemPrompt,
+      question,
+      maxTokens,
+      conversationHistory,
+    );
   }
 
   if (provider === "groq") {
     try {
       const { answer } = await callGroqConfiguredModel(
         config.modelId,
-        chatMessages(systemPrompt, question),
+        providerMessages(systemPrompt, question, conversationHistory),
         { maxTokens },
       );
       return answer;
@@ -141,9 +240,15 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
 
   if (provider === "google" || provider === "gemini") {
     try {
+      const historyBlock =
+        conversationHistory.length > 0
+          ? `\n\n[Prior conversation]\n${conversationHistory
+              .map((t) => `${t.role}: ${t.content}`)
+              .join("\n")}`
+          : "";
       const { answer } = await callGeminiConfiguredModel(config.modelId, {
         parts: [{ text: question }],
-        systemPrompt,
+        systemPrompt: `${systemPrompt}${historyBlock}`.trim(),
         maxTokens,
       });
       return answer;
@@ -157,10 +262,10 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
   }
 
   if (provider === "openrouter") {
-    const messages = [
-      ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
-      { role: "user" as const, content: question },
-    ];
+    const messages = providerMessages(systemPrompt, question, conversationHistory).map((m) => ({
+      role: m.role,
+      content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+    }));
     try {
       const { answer } = await callOpenRouterConfiguredModel(config.modelId, messages, {
         maxTokens,

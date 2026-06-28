@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       directTargetEntityId?: string;
       turbo?: boolean;
       attachmentIds?: string[];
+      conversationId?: string;
     };
 
     const taskText = (body.taskText || body.question || "").trim();
@@ -45,6 +46,7 @@ export async function POST(request: NextRequest) {
       attachmentIds: Array.isArray(body.attachmentIds)
         ? body.attachmentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
         : undefined,
+      conversationId: body.conversationId?.trim() || undefined,
     });
 
     return NextResponse.json(result);

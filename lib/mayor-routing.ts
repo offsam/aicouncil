@@ -20,6 +20,9 @@ export type MayorBuildingRow = {
 
 /** routing_logs.routing_action value for Mayor structure-command gate. */
 export function mayorRoutingLogAction(decision: MayorRoutingDecision): string {
+  if (decision.action === "clarify") {
+    return "clarify";
+  }
   if (decision.matchedBy === "structure_command") {
     return "structure_delegate";
   }
@@ -95,7 +98,7 @@ function extractJsonObject(rawText: string): unknown {
 
 /** Best-effort extraction when the model truncates closing braces/quotes. */
 function salvageMayorEnvelopeJson(fragment: string): Record<string, unknown> | null {
-  const actionMatch = fragment.match(/"action"\s*:\s*"(answer_self|delegate)"/);
+  const actionMatch = fragment.match(/"action"\s*:\s*"(answer_self|delegate|clarify)"/);
   if (!actionMatch) return null;
 
   const action = actionMatch[1];
@@ -130,7 +133,12 @@ function routingFieldsFromParsed(parsed: Record<string, unknown>): MayorRoutingD
       ? (parsed.routing as Record<string, unknown>)
       : parsed;
 
-  const action = routingRaw.action === "delegate" ? "delegate" : "answer_self";
+  const action =
+    routingRaw.action === "delegate"
+      ? "delegate"
+      : routingRaw.action === "clarify"
+        ? "clarify"
+        : "answer_self";
   const target =
     typeof routingRaw.target === "string" && routingRaw.target.trim()
       ? routingRaw.target.trim()
@@ -207,6 +215,10 @@ export async function finalizeMayorRoutingDecision(
   decision: MayorRoutingDecision,
   validBuildingIds: Set<string>,
 ): Promise<MayorRoutingDecision> {
+  if (decision.action === "clarify") {
+    return decision;
+  }
+
   if (decision.action !== "delegate" || !decision.target) {
     return decision;
   }

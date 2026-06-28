@@ -36,6 +36,13 @@ import {
   MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER,
   MAYOR_ROUTING_MISSING_ANSWER,
 } from "./mayor-persona";
+import {
+  appendMayorConversationTurn,
+  loadMayorConversationHistory,
+  mayorClarifyAllowed,
+  mayorConversationTurnsForModel,
+  type MayorConversationMessageKind,
+} from "./mayor-conversation-memory";
 import { sanitizeUserFacingText, toUserFacingProviderError } from "./provider-user-error";
 import { buildManagerSummaryPrompt } from "./agent-persona";
 import { isMayorAgent as isMayorAgentByGraph } from "./workspace/graph-identity";
@@ -1158,6 +1165,32 @@ async function executeTechDepartmentTask(
   };
 }
 
+async function persistMayorConversationIfNeeded(
+  conversationId: string | undefined,
+  userText: string,
+  assistantText: string,
+  assistantKind: MayorConversationMessageKind = "answer",
+): Promise<void> {
+  if (!conversationId) return;
+  await appendMayorConversationTurn(conversationId, userText, assistantText, assistantKind);
+}
+
+async function wrapMayorResultWithConversationMemory(
+  conversationId: string | undefined,
+  userText: string,
+  result: ExecuteChatTaskResult,
+): Promise<ExecuteChatTaskResult> {
+  if (conversationId && result.mode === "single" && result.answer?.trim()) {
+    await persistMayorConversationIfNeeded(
+      conversationId,
+      userText,
+      result.answer.trim(),
+      "answer",
+    );
+  }
+  return result;
+}
+
 async function executeMayorTask(
   taskText: string,
   mayorAgentId: string,
@@ -1167,6 +1200,8 @@ async function executeMayorTask(
     executionMode?: ExecutionMode;
     forceFailSlugs?: string[];
     forceMayorInvokeError?: boolean;
+    /** Channel-scoped id, e.g. telegram:<chat_id>. Enables memory + clarify. */
+    conversationId?: string;
   },
 ): Promise<ExecuteChatTaskResult> {
   const supabase = getSupabaseAdmin();
@@ -1178,6 +1213,13 @@ async function executeMayorTask(
 
   const buildingRows = buildings || [];
   const validBuildingIds = new Set(buildingRows.map((b) => b.id));
+
+  const conversationHistory = options?.conversationId
+    ? await loadMayorConversationHistory(options.conversationId)
+    : [];
+  const clarifyAllowed =
+    Boolean(options?.conversationId) && mayorClarifyAllowed(conversationHistory);
+  const modelHistory = mayorConversationTurnsForModel(conversationHistory);
 
   let decision = await resolveDeterministicMayorRoutingDecision(taskText, buildingRows);
   let mayorAnswer: string | null = null;
@@ -1208,14 +1250,31 @@ async function executeMayorTask(
           registryId: mayorAgentId,
           costTier: "mid",
         },
-        systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows),
+        systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows, { clarifyAllowed }),
         forceError: options?.forceMayorInvokeError,
         maxTokens: 4096,
+        conversationHistory: modelHistory,
       });
 
       governmentFallback = invoked.governmentFallback;
       const parsed = parseMayorAgentRoutingEnvelope(invoked.answer, buildingRows);
-      decision = await finalizeMayorRoutingDecision(parsed.decision, validBuildingIds);
+      let parsedDecision = parsed.decision;
+      if (parsedDecision.action === "clarify") {
+        if (!clarifyAllowed) {
+          parsedDecision = {
+            ...parsedDecision,
+            action: "answer_self",
+            trace: [...parsedDecision.trace, "clarify_blocked"],
+          };
+        } else if (!parsed.answer?.trim()) {
+          parsedDecision = {
+            ...parsedDecision,
+            action: "answer_self",
+            trace: [...parsedDecision.trace, "clarify_empty"],
+          };
+        }
+      }
+      decision = await finalizeMayorRoutingDecision(parsedDecision, validBuildingIds);
       mayorAnswer = parsed.answer;
     } catch (err) {
       const internalMessage = err instanceof Error ? err.message : String(err);
@@ -1271,18 +1330,85 @@ async function executeMayorTask(
     const officeId = await requireExternalEntryOfficeId();
     const techBuildingId = await requireTechDepartmentBuildingId(officeId);
     if (decision.target === techBuildingId) {
-      return executeTechDepartmentTask(taskText, {
+      return wrapMayorResultWithConversationMemory(
+        options?.conversationId,
+        taskText,
+        await executeTechDepartmentTask(taskText, {
+          turbo: options?.turbo,
+          executionMode: options?.executionMode,
+          forceFailSlugs: options?.forceFailSlugs,
+        }),
+      );
+    }
+    return wrapMayorResultWithConversationMemory(
+      options?.conversationId,
+      taskText,
+      await executeManagerTask(taskText, decision.target, {
         turbo: options?.turbo,
+        applySummary: true,
         executionMode: options?.executionMode,
         forceFailSlugs: options?.forceFailSlugs,
+      }),
+    );
+  }
+
+  if (decision.action === "clarify") {
+    const clarifyQuestion = mayorAnswer?.trim();
+    if (!clarifyQuestion) {
+      decision = {
+        ...decision,
+        action: "answer_self",
+        trace: [...decision.trace, "clarify_empty_fallback"],
+      };
+    } else {
+      const [{ data: agentReg }, { data: agentRow }, { data: chamberRow }] = await Promise.all([
+        supabase.from("entity_registry").select("slug, name").eq("id", mayorAgentId).maybeSingle(),
+        supabase.from("agents").select("name").eq("id", mayorAgentId).maybeSingle(),
+        supabase.from("entity_registry").select("name").eq("id", mayorChamberRegistryId).maybeSingle(),
+      ]);
+
+      await supabase.from("routing_logs").insert({
+        task_text: taskText,
+        chosen_target_entity_registry_id: mayorChamberRegistryId,
+        all_candidates: [],
+        method: "llm-cheap",
+        agent_count: mayorAgentSlug ? 1 : 0,
+        outcome: "unrated",
+        routing_action: mayorRoutingLogAction(decision),
+        routing_matched_by: decision.matchedBy,
+        routing_confidence: decision.confidence,
+        routing_reasoning: decision.reasoning,
+        routing_trace: decision.trace,
       });
+
+      await persistMayorConversationIfNeeded(
+        options?.conversationId,
+        taskText,
+        clarifyQuestion,
+        "clarify",
+      );
+
+      return {
+        mode: "single",
+        executionMode: options?.executionMode ?? "fast",
+        answer: clarifyQuestion,
+        routing: {
+          targets: [
+            {
+              entityRegistryId: mayorChamberRegistryId,
+              confidence: decision.confidence || 1,
+              reason: decision.reasoning || "clarify",
+            },
+          ],
+          method: "llm-cheap",
+          agentCount: mayorAgentSlug ? 1 : 0,
+        },
+        targetName: chamberRow?.name ?? null,
+        agentName: mayorAgentName ?? agentRow?.name ?? agentReg?.name ?? agentReg?.slug ?? null,
+        agentId: mayorAgentId,
+        governmentFallback,
+      };
     }
-    return executeManagerTask(taskText, decision.target, {
-      turbo: options?.turbo,
-      applySummary: true,
-      executionMode: options?.executionMode,
-      forceFailSlugs: options?.forceFailSlugs,
-    });
   }
 
   const [{ data: agentReg }, { data: agentRow }, { data: chamberRow }] = await Promise.all([
@@ -1348,6 +1474,8 @@ async function executeMayorTask(
     fallbackUsed: governmentFallback,
   });
 
+  await persistMayorConversationIfNeeded(options?.conversationId, taskText, answer, "answer");
+
   return {
     mode: "single",
     executionMode: options?.executionMode ?? "fast",
@@ -1399,6 +1527,8 @@ export async function executeChatTask(
     attachmentIds?: string[];
     /** Non-production verify only — simulates Mayor invoke failure. */
     forceMayorInvokeError?: boolean;
+    /** Channel-scoped id for Mayor memory (e.g. telegram:12345). */
+    conversationId?: string;
   },
 ): Promise<ExecuteChatTaskResult> {
   if (executionMode !== undefined && !isExecutionMode(executionMode)) {
@@ -1439,6 +1569,7 @@ export async function executeChatTask(
           forceFailSlugs: options?.forceFailSlugs,
           forceMayorInvokeError:
             process.env.NODE_ENV !== "production" ? options?.forceMayorInvokeError : undefined,
+          conversationId: options?.conversationId,
         }),
       );
     }

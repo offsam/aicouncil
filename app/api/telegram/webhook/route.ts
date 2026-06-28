@@ -1,3 +1,4 @@
+import { formatTelegramMayorConversationId } from "@/lib/mayor-conversation-memory";
 import { NextRequest, NextResponse } from "next/server";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 import { getTelegramBotToken, getTelegramWebhookSecret, telegramSendMessage } from "@/lib/telegram/bot-api";
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest) {
       taskText: text,
       targetAgentId: mayor.targetAgentId,
       directTargetEntityId: mayor.directTargetEntityId,
+      conversationId: formatTelegramMayorConversationId(chatId),
     });
 
     const answer = extractChatAnswer(result);

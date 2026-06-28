@@ -86,6 +86,23 @@ async function main() {
     answer: answerParsed.answer,
   });
 
+  const clarifyRaw = JSON.stringify({
+    routing: {
+      action: "clarify",
+      matchedBy: "semantic",
+      confidence: 0.55,
+      reasoning: "Costly ambiguity",
+      trace: ["mayor_agent", "clarify"],
+    },
+    answer: "Какое здание — ЮРИСТЫ или Citizly?",
+  });
+  const clarifyParsed = parseMayorAgentRoutingEnvelope(clarifyRaw, BUILDINGS);
+  record(
+    "parse clarify envelope",
+    clarifyParsed.decision.action === "clarify" && Boolean(clarifyParsed.answer),
+    { action: clarifyParsed.decision.action, answer: clarifyParsed.answer },
+  );
+
   const badParsed = parseMayorAgentRoutingEnvelope("{ invalid json", BUILDINGS);
   record("parse error → user message", badParsed.decision.trace.includes("parse_error") && Boolean(badParsed.answer), {
     trace: badParsed.decision.trace,

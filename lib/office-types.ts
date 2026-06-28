@@ -323,7 +323,7 @@ export type ManagerRoutingDecision = {
  */
 export type MayorRoutingDecision = {
   /** Whether Mayor handles the task itself or delegates to another building. */
-  action: "answer_self" | "delegate";
+  action: "answer_self" | "delegate" | "clarify";
   /** entityRegistryId of the target building — set only when action='delegate'. */
   target?: string;
   /** entityRegistryId of the resolved delegate building — set only when action='delegate'. */
