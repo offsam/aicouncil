@@ -39,9 +39,89 @@ export function containsAnyKeyword(text: string, keywords: string[]): boolean {
   return keywords.some((keyword) => normalized.includes(keyword.toLowerCase()));
 }
 
+/** Runtime / DB-state questions — not source-code audit. */
+export const RUNTIME_DIAGNOSE_KEYWORDS = [
+  "сколько агентов",
+  "что было в логах",
+  "что в логах",
+  "routing_logs",
+  "завис запрос",
+  "зависло",
+  "состояние",
+  "сколько записей",
+  "chamber_archive",
+  "agent_assignments",
+];
+
+/** Source-code audit cues (distinct from runtime diagnose). */
+export const CODE_AUDIT_KEYWORDS = [
+  "найди баг",
+  "find bug",
+  "проверь логику",
+  "check logic",
+  "проведи аудит",
+  "code audit",
+  "code_audit",
+  "исходный код",
+  "source code",
+  "репозитор",
+  "repository",
+  "функци",
+  "function ",
+  ".ts",
+  ".tsx",
+  "lib/",
+  "app/api/",
+  "импорт",
+  "import ",
+];
+
+export function hasCodeAuditKeywords(text: string): boolean {
+  return containsAnyKeyword(text, CODE_AUDIT_KEYWORDS) || hasExplicitCodeReference(text);
+}
+
+export function hasExplicitCodeReference(text: string): boolean {
+  const normalized = text.toLowerCase();
+  if (/\b[\w./-]+\.(ts|tsx|js|jsx|sql)\b/.test(normalized)) return true;
+  if (/(?:^|[\s(])@\/[\w./-]+/.test(text)) return true;
+  if (/(?:^|[\s(])(?:lib|app|components|scripts)\/[\w./-]+/.test(normalized)) return true;
+  if (/\b(?:функци[яию]|function|метод)\s+[`'"]?\w+/iu.test(text)) return true;
+  return false;
+}
+
+/** Explicit file/function/code mention wins over generic diagnose cues (mirrors hasDiagnoseConflictSignal). */
+export function hasCodeAuditConflictSignal(text: string): boolean {
+  if (hasExplicitCodeReference(text)) return true;
+
+  const normalized = text.toLowerCase();
+  const auditPhrases = [
+    "найди баг",
+    "find bug",
+    "проверь логику",
+    "check logic",
+    "проведи аудит",
+    "code audit",
+    "code_audit",
+  ];
+  if (auditPhrases.some((p) => normalized.includes(p))) return true;
+
+  // «почему не работает X» with technical/code framing (not pure runtime DB question)
+  if (/почему не работает/i.test(normalized) && hasExplicitCodeReference(text)) return true;
+  if (/почему не работает/i.test(normalized) && /\b(telegram|api|route|handler|комponent|component|логик)\b/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function hasRuntimeDiagnoseKeywords(text: string): boolean {
+  return containsAnyKeyword(text, RUNTIME_DIAGNOSE_KEYWORDS);
+}
+
 export function hasStructureMutationKeywords(text: string): boolean {
   return containsAnyKeyword(text, STRUCTURE_MUTATION_KEYWORDS);
 }
+
 
 /** Imperative verbs that start a structure mutation when they precede diagnose cues. */
 export const PRIMARY_STRUCTURE_VERBS = [
