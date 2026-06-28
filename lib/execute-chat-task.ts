@@ -32,9 +32,9 @@ import {
 import { isMainChamber } from "./workspace/is-main-chamber";
 import {
   buildMayorExecutiveSystemPrompt,
-  MAYOR_INVOKE_UNAVAILABLE_ANSWER,
   MAYOR_ROUTING_MISSING_ANSWER,
 } from "./mayor-persona";
+import { PROVIDER_UNAVAILABLE_USER_MESSAGE, toUserFacingProviderError } from "./provider-user-error";
 import { buildManagerSummaryPrompt } from "./agent-persona";
 import { isMayorAgent as isMayorAgentByGraph } from "./workspace/graph-identity";
 import {
@@ -63,6 +63,7 @@ import {
   fetchChatAttachmentsByIds,
   resolveChatResponseAttachments,
 } from "./chat/chat-attachments-server";
+import { sanitizeUserFacingText } from "./provider-user-error";
 
 export type ChatWorkflowStep = {
   step_order: number;
@@ -1187,7 +1188,7 @@ async function executeMayorTask(
       return {
         mode: "single",
         executionMode: options?.executionMode ?? "fast",
-        answer: MAYOR_INVOKE_UNAVAILABLE_ANSWER,
+        answer: toUserFacingProviderError(err),
         routing: {
           targets: [
             {
@@ -1366,8 +1367,20 @@ export async function executeChatTask(
   const resolvedExecutionMode = executionMode ?? "fast";
   const originalTaskText = taskText.trim();
   const workingTaskText = await enrichChatTaskText(originalTaskText, options?.attachmentIds);
-  const finish = (result: ExecuteChatTaskResult) =>
-    appendResponseAttachments(result, originalTaskText, options?.attachmentIds);
+  const finish = async (result: ExecuteChatTaskResult) => {
+    const withAttachments = await appendResponseAttachments(
+      result,
+      originalTaskText,
+      options?.attachmentIds,
+    );
+    if (withAttachments.mode === "single" && withAttachments.answer) {
+      return {
+        ...withAttachments,
+        answer: sanitizeUserFacingText(withAttachments.answer),
+      };
+    }
+    return withAttachments;
+  };
 
   if (options?.targetAgentId) {
     const chamberId =

@@ -1,4 +1,5 @@
 import type { ExecuteChatTaskResult } from "@/lib/execute-chat-task";
+import { sanitizeUserFacingText, toUserFacingProviderError } from "@/lib/provider-user-error";
 import { resolveAppBaseUrl } from "./app-base-url";
 
 export type MayorChatRequest = {
@@ -24,7 +25,10 @@ export async function postMayorChatViaApi(
 
   const data = (await res.json()) as ExecuteChatTaskResult & { error?: string };
   if (!res.ok) {
-    throw new Error(data.error ?? `POST /api/chat failed (${res.status})`);
+    throw new Error(toUserFacingProviderError(new Error(data.error ?? `POST /api/chat failed (${res.status})`)));
+  }
+  if (data.mode === "single" && data.answer) {
+    return { ...data, answer: sanitizeUserFacingText(data.answer) };
   }
   return data;
 }

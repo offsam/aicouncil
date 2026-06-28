@@ -48,21 +48,25 @@ export async function invokeChamberAgentWithFreeFallback(params: {
     if (!reserve) {
       throw primaryErr;
     }
-    const answer = await invokeAgentForWorkflow({
-      agentSlug: reserve.slug,
-      agentRegistryId: reserve.registryId,
-      chamberRegistryId: params.chamberRegistryId,
-      question: params.question,
-      systemPromptPrefix: params.systemPromptPrefix,
-    });
-    console.info(
-      `[chamber-fallback] chamber=${params.chamberRegistryId} primary=${primary.slug} failed → reserve=${reserve.slug} (free)`,
-    );
-    return {
-      answer,
-      agent: reserve,
-      governmentFallback: true,
-      primaryError,
-    };
+    try {
+      const answer = await invokeAgentForWorkflow({
+        agentSlug: reserve.slug,
+        agentRegistryId: reserve.registryId,
+        chamberRegistryId: params.chamberRegistryId,
+        question: params.question,
+        systemPromptPrefix: params.systemPromptPrefix,
+      });
+      console.info(
+        `[chamber-fallback] chamber=${params.chamberRegistryId} primary=${primary.slug} failed → reserve=${reserve.slug} (free)`,
+      );
+      return {
+        answer,
+        agent: reserve,
+        governmentFallback: true,
+        primaryError,
+      };
+    } catch (reserveErr) {
+      throw reserveErr;
+    }
   }
 }

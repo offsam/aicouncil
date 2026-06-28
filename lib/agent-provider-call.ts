@@ -123,21 +123,37 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
   }
 
   if (provider === "groq") {
-    const { answer } = await callGroqConfiguredModel(
-      config.modelId,
-      chatMessages(systemPrompt, question),
-      { maxTokens },
-    );
-    return answer;
+    try {
+      const { answer } = await callGroqConfiguredModel(
+        config.modelId,
+        chatMessages(systemPrompt, question),
+        { maxTokens },
+      );
+      return answer;
+    } catch (err) {
+      throw new ProviderInvokeError(
+        "groq",
+        config.modelId,
+        err instanceof Error ? err.message : "Groq failed",
+      );
+    }
   }
 
   if (provider === "google" || provider === "gemini") {
-    const { answer } = await callGeminiConfiguredModel(config.modelId, {
-      parts: [{ text: question }],
-      systemPrompt,
-      maxTokens,
-    });
-    return answer;
+    try {
+      const { answer } = await callGeminiConfiguredModel(config.modelId, {
+        parts: [{ text: question }],
+        systemPrompt,
+        maxTokens,
+      });
+      return answer;
+    } catch (err) {
+      throw new ProviderInvokeError(
+        provider,
+        config.modelId,
+        err instanceof Error ? err.message : "Gemini failed",
+      );
+    }
   }
 
   if (provider === "openrouter") {
@@ -145,10 +161,18 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
       ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
       { role: "user" as const, content: question },
     ];
-    const { answer } = await callOpenRouterConfiguredModel(config.modelId, messages, {
-      maxTokens,
-    });
-    return answer;
+    try {
+      const { answer } = await callOpenRouterConfiguredModel(config.modelId, messages, {
+        maxTokens,
+      });
+      return answer;
+    } catch (err) {
+      throw new ProviderInvokeError(
+        "openrouter",
+        config.modelId,
+        err instanceof Error ? err.message : "OpenRouter failed",
+      );
+    }
   }
 
   throw new ProviderInvokeError(

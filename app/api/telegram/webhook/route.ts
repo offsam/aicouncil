@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 import { getTelegramBotToken, getTelegramWebhookSecret, telegramSendMessage } from "@/lib/telegram/bot-api";
 import { extractChatAnswer, postMayorChatViaApi } from "@/lib/telegram/internal-chat";
+import { toUserFacingProviderError } from "@/lib/provider-user-error";
 import { resolveMayorChatTarget } from "@/lib/telegram/mayor-chat-target";
 
 type TelegramUpdate = {
@@ -62,10 +63,10 @@ export async function POST(request: NextRequest) {
     await telegramSendMessage(chatId, answer);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Server error";
-    console.error("[telegram/webhook]", message);
+    const message = toUserFacingProviderError(err);
+    console.error("[telegram/webhook]", err instanceof Error ? err.message : err);
     try {
-      await telegramSendMessage(chatId, `Ошибка: ${message.slice(0, 500)}`);
+      await telegramSendMessage(chatId, message);
     } catch {
       /* ignore secondary failure */
     }
