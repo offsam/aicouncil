@@ -1,7 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { TechDepartmentStats } from "@/lib/tech-department-stats";
 import type { BuildingNodeData } from "./build-workspace-graph";
-import { TECH_DEPARTMENT_BUILDING_ID } from "./tech-department";
 
 /** Inventory counts derivable from canvas graph — no API polling. */
 export function computeClientTechInventory(
@@ -65,13 +64,14 @@ export function patchTechDepartmentInventoryNode(
   nodes: Node[],
   connectionCount: number,
   poolAgentCount: number,
+  techDepartmentBuildingId: string,
   opts?: { pulse?: boolean },
 ): Node[] {
   const snapshot = computeClientTechInventory(nodes, connectionCount, poolAgentCount);
   const fingerprint = techInventoryFingerprint(nodes, connectionCount, poolAgentCount);
 
   return nodes.map((node) => {
-    if (node.id !== TECH_DEPARTMENT_BUILDING_ID) return node;
+    if (node.id !== techDepartmentBuildingId) return node;
     const data = node.data as BuildingNodeData;
     const prevFingerprint = data.techDeptInventoryFingerprint;
     const changed = prevFingerprint !== fingerprint;
@@ -93,11 +93,12 @@ export function initialTechDeptSnapshotFromGraph(
   nodes: Node[],
   edges: Edge[],
   poolAgentCount: number,
+  techDepartmentBuildingId: string,
 ): { nodes: Node[]; snapshot: TechDepartmentStats } {
   const snapshot = computeClientTechInventory(nodes, edges.length, poolAgentCount);
   const fingerprint = techInventoryFingerprint(nodes, edges.length, poolAgentCount);
   const next = nodes.map((node) => {
-    if (node.id !== TECH_DEPARTMENT_BUILDING_ID) return node;
+    if (node.id !== techDepartmentBuildingId) return node;
     return {
       ...node,
       data: {
