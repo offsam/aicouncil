@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeChatTask } from "@/lib/execute-chat-task";
 import { isExecutionMode, type ExecutionMode } from "@/lib/execution-mode";
-import { toUserFacingProviderError } from "@/lib/provider-user-error";
+import { toUserFacingChatError } from "@/lib/provider-user-error";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 
 /**
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/chat]", err instanceof Error ? err.message : err);
-    const message = toUserFacingProviderError(err);
+    const message = toUserFacingChatError(err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

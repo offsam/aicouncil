@@ -15,6 +15,10 @@ export const MAYOR_ROUTING_MISSING_ANSWER =
 export const MAYOR_INVOKE_UNAVAILABLE_ANSWER =
   "Сейчас я не смог получить ответ от модели. Попробуйте ещё раз через минуту.";
 
+/** Shown when delegate target is missing, unknown, or has no main chamber for execution. */
+export const MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER =
+  "Это здание пока не настроено для обработки запросов. Сформулируйте запрос иначе или уточните, к какому отделу он относится.";
+
 // Kept in sync with lib/provider-user-error.ts PROVIDER_UNAVAILABLE_USER_MESSAGE
 
 const MAYOR_ROUTING_RULES = `You are Mayor — executive decision-maker and technical lead of the AI Office. For each user request you MUST decide:

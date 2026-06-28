@@ -15,7 +15,7 @@ import { normalizeCostTier } from "./cost-tier";
 import { GENERAL_INTAKE_ID } from "./route-agent-ids";
 import { updateRoutingLogAgentCount, logMayorRoutingDecision } from "./routing";
 import { getSupabaseAdmin } from "./supabase/admin";
-import type { RouteDecision } from "./office-types";
+import type { RouteDecision, MayorRoutingDecision } from "./office-types";
 import { processTask } from "./workflow-orchestrator";
 import {
   finalizeMayorRoutingDecision,
@@ -32,9 +32,10 @@ import {
 import { isMainChamber } from "./workspace/is-main-chamber";
 import {
   buildMayorExecutiveSystemPrompt,
+  MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER,
   MAYOR_ROUTING_MISSING_ANSWER,
 } from "./mayor-persona";
-import { PROVIDER_UNAVAILABLE_USER_MESSAGE, toUserFacingProviderError } from "./provider-user-error";
+import { sanitizeUserFacingText, toUserFacingProviderError } from "./provider-user-error";
 import { buildManagerSummaryPrompt } from "./agent-persona";
 import { isMayorAgent as isMayorAgentByGraph } from "./workspace/graph-identity";
 import {
@@ -63,7 +64,6 @@ import {
   fetchChatAttachmentsByIds,
   resolveChatResponseAttachments,
 } from "./chat/chat-attachments-server";
-import { sanitizeUserFacingText } from "./provider-user-error";
 
 export type ChatWorkflowStep = {
   step_order: number;
@@ -680,6 +680,19 @@ async function resolveManagerEntry(
   return { buildingId, managerChamberId: candidateId };
 }
 
+function mayorSelfAnswerFromDecision(
+  decision: MayorRoutingDecision,
+  mayorAnswer: string | null,
+): string {
+  if (
+    decision.trace.includes("fallback_no_main_chamber") ||
+    decision.trace.includes("fallback_invalid_or_low_confidence")
+  ) {
+    return MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER;
+  }
+  return mayorAnswer?.trim() || MAYOR_ROUTING_MISSING_ANSWER;
+}
+
 async function executeManagerTask(
   taskText: string,
   buildingRegistryId: string,
@@ -698,7 +711,34 @@ async function executeManagerTask(
   const mainChamber = await resolveMainChamber(buildingRegistryId);
 
   if (!mainChamber) {
-    throw new Error("Main chamber (Manager) не найден для здания");
+    console.warn(
+      `[executeManagerTask] building=${buildingRegistryId} has no main chamber (routing_role=main)`,
+    );
+    const { data: buildingRow } = await supabase
+      .from("entity_registry")
+      .select("name")
+      .eq("id", buildingRegistryId)
+      .maybeSingle();
+
+    return {
+      mode: "single",
+      executionMode,
+      answer: MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER,
+      routing: {
+        targets: [
+          {
+            entityRegistryId: buildingRegistryId,
+            confidence: 0,
+            reason: "building_not_configured",
+          },
+        ],
+        method: "llm-cheap",
+        agentCount: 0,
+      },
+      targetName: buildingRow?.name ?? null,
+      agentName: null,
+      agentId: null,
+    };
   }
 
   const internalChambers = await listBuildingInternalChambers(buildingRegistryId);
@@ -1255,8 +1295,7 @@ async function executeMayorTask(
   }
 
   const answer =
-    mayorAnswer?.trim() ||
-    MAYOR_ROUTING_MISSING_ANSWER;
+    mayorSelfAnswerFromDecision(decision, mayorAnswer);
 
   const { data: logRow } = await supabase
     .from("routing_logs")

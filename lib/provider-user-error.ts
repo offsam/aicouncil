@@ -2,6 +2,10 @@
 export const PROVIDER_UNAVAILABLE_USER_MESSAGE =
   "Сейчас я не смог получить ответ от модели. Попробуйте ещё раз через минуту.";
 
+/** Delegation/graph configuration gap — building missing or not executable. */
+export const BUILDING_NOT_CONFIGURED_USER_MESSAGE =
+  "Это здание пока не настроено для обработки запросов. Сформулируйте запрос иначе или уточните, к какому отделу он относится.";
+
 /** Thrown when a configured provider call fails; carries sanitized user text. */
 export class ProviderInvokeError extends Error {
   readonly provider: string;
@@ -19,6 +23,23 @@ export class ProviderInvokeError extends Error {
 
 const PROVIDER_LEAK_PATTERN =
   /groq|openai|anthropic|anthropic\.com|llama|gpt-|claude|gemini|mistral|deepseek|openrouter|rate.?limit|tokens per (?:day|minute)|\bTP[MD]\b|429|quota|org_01/i;
+
+const DELEGATION_CONFIG_PATTERN =
+  /Main chamber \(Manager\) не найден|building_not_configured|fallback_no_main_chamber|fallback_invalid_or_low_confidence/i;
+
+/** Map chat/delegation failures to safe user-facing text (provider + graph config gaps). */
+export function toUserFacingChatError(err: unknown): string {
+  if (err instanceof Error) {
+    if (DELEGATION_CONFIG_PATTERN.test(err.message)) {
+      return BUILDING_NOT_CONFIGURED_USER_MESSAGE;
+    }
+    return toUserFacingProviderError(err);
+  }
+  if (typeof err === "string" && DELEGATION_CONFIG_PATTERN.test(err)) {
+    return BUILDING_NOT_CONFIGURED_USER_MESSAGE;
+  }
+  return toUserFacingProviderError(err);
+}
 
 /** Map any provider failure to a safe user-facing message; preserve detail in logs only. */
 export function toUserFacingProviderError(err: unknown): string {

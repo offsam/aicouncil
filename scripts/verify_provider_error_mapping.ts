@@ -2,9 +2,11 @@
  * Verify provider errors are mapped to plain-language user messages (item 3).
  */
 import {
+  BUILDING_NOT_CONFIGURED_USER_MESSAGE,
   PROVIDER_UNAVAILABLE_USER_MESSAGE,
   looksLikeProviderErrorText,
   sanitizeUserFacingText,
+  toUserFacingChatError,
   toUserFacingProviderError,
 } from "../lib/provider-user-error";
 import { ProviderInvokeError } from "../lib/provider-user-error";
@@ -42,6 +44,11 @@ function main() {
   assert(
     toUserFacingProviderError(new Error("Агент Мэра не найден")) === "Агент Мэра не найден",
     "non-provider errors pass through",
+  );
+  assert(
+    toUserFacingChatError(new Error("Main chamber (Manager) не найден для здания")) ===
+      BUILDING_NOT_CONFIGURED_USER_MESSAGE,
+    "main chamber gap maps to configured building message",
   );
 
   console.log("\nAll provider error mapping checks passed.");

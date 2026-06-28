@@ -225,10 +225,20 @@ export async function finalizeMayorRoutingDecision(
   }
 
   const mainChamber = await resolveMainChamber(decision.target);
+  if (!mainChamber?.chamberRegistryId) {
+    return {
+      action: "answer_self",
+      matchedBy: decision.matchedBy,
+      confidence: decision.confidence,
+      reasoning: "Delegate target building has no main chamber (Manager) — not configured for execution",
+      trace: [...decision.trace, "fallback_no_main_chamber"],
+    };
+  }
+
   return {
     ...decision,
     delegatedBuildingId: decision.target,
-    delegatedChamberId: mainChamber?.chamberRegistryId ?? null,
+    delegatedChamberId: mainChamber.chamberRegistryId,
   };
 }
 

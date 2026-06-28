@@ -117,6 +117,38 @@ async function main() {
     trace: lowConf.trace,
   });
 
+  const noMain = await finalizeMayorRoutingDecision(
+    {
+      action: "delegate",
+      target: "f7a5bd42-6ef5-4784-a53e-035b4dd56f83",
+      matchedBy: "semantic",
+      confidence: 0.9,
+      reasoning: "test building without main chamber",
+      trace: ["mayor_agent"],
+    },
+    new Set(BUILDINGS.map((b) => b.id).concat(["f7a5bd42-6ef5-4784-a53e-035b4dd56f83"])),
+  );
+  record("no main chamber → answer_self fallback", noMain.action === "answer_self" && noMain.trace.includes("fallback_no_main_chamber"), {
+    action: noMain.action,
+    trace: noMain.trace,
+  });
+
+  const fakeId = await finalizeMayorRoutingDecision(
+    {
+      action: "delegate",
+      target: "00000000-0000-4000-8000-000000000099",
+      matchedBy: "semantic",
+      confidence: 0.9,
+      reasoning: "hallucinated uuid",
+      trace: ["mayor_agent"],
+    },
+    new Set(BUILDINGS.map((b) => b.id)),
+  );
+  record("unknown building id → answer_self fallback", fakeId.action === "answer_self" && fakeId.trace.includes("fallback_invalid_or_low_confidence"), {
+    action: fakeId.action,
+    trace: fakeId.trace,
+  });
+
   console.log("\n=== Summary ===");
   const passed = checks.filter((c) => c.pass).length;
   console.log(`${passed}/${checks.length} passed`);
