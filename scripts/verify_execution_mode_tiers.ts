@@ -5,6 +5,7 @@
 import * as fs from "fs";
 import {
   EXECUTION_MODE_MAX_ACTIVE_TIER,
+  isAgentTierHighlightedForWorkspace,
   isCostTierActiveForExecutionMode,
   parseExecutionModeFromWorkspaceMeta,
 } from "../lib/workspace/execution-mode-tiers";
@@ -77,6 +78,18 @@ async function main() {
       EXECUTION_MODE_MAX_ACTIVE_TIER.team === "cheap" &&
       EXECUTION_MODE_MAX_ACTIVE_TIER.council === "mid",
   );
+
+  for (const tier of tiers) {
+    record(
+      `smart mode: ${tier} highlighted=${isAgentTierHighlightedForWorkspace(tier, "fast", true)}`,
+      isAgentTierHighlightedForWorkspace(tier, "fast", true) === (tier === "premium"),
+    );
+    record(
+      `smart off: fast ${tier} unchanged`,
+      isAgentTierHighlightedForWorkspace(tier, "fast", false) ===
+        isCostTierActiveForExecutionMode(tier, "fast"),
+    );
+  }
 
   const freeChamber = (await findChamberForMode("fast")) ?? FREE_ONLY_MAIN_CHAMBER;
   if (!freeChamber) {

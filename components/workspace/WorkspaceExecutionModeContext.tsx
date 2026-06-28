@@ -13,6 +13,9 @@ import type { ExecutionMode } from "@/lib/execution-mode";
 type WorkspaceExecutionModeContextValue = {
   executionMode: ExecutionMode;
   setExecutionMode: (mode: ExecutionMode) => void;
+  /** Smart mode (UI); backend still uses turbo flag for premium agent selection. */
+  smartEnabled: boolean;
+  setSmartEnabled: (enabled: boolean) => void;
 };
 
 const WorkspaceExecutionModeContext =
@@ -28,6 +31,11 @@ export function WorkspaceExecutionModeProvider({
   initialMode?: ExecutionMode;
 }) {
   const [executionMode, setExecutionModeState] = useState<ExecutionMode>(initialMode);
+  const [smartEnabled, setSmartEnabledState] = useState(false);
+
+  const setSmartEnabled = useCallback((enabled: boolean) => {
+    setSmartEnabledState(enabled);
+  }, []);
 
   const setExecutionMode = useCallback(
     (mode: ExecutionMode) => {
@@ -45,8 +53,10 @@ export function WorkspaceExecutionModeProvider({
     () => ({
       executionMode,
       setExecutionMode,
+      smartEnabled,
+      setSmartEnabled,
     }),
-    [executionMode, setExecutionMode],
+    [executionMode, setExecutionMode, smartEnabled, setSmartEnabled],
   );
 
   return (

@@ -27,6 +27,18 @@ export function isCostTierActiveForExecutionMode(
   return COST_TIER_ORDER[normalized] <= COST_TIER_ORDER[maxTier];
 }
 
+/** Canvas tier glow: Smart highlights premium ($$$); otherwise execution mode caps. */
+export function isAgentTierHighlightedForWorkspace(
+  tier: CostTier | string | null | undefined,
+  mode: ExecutionMode,
+  smartEnabled = false,
+): boolean {
+  if (smartEnabled) {
+    return normalizeCostTier(tier) === "premium";
+  }
+  return isCostTierActiveForExecutionMode(tier, mode);
+}
+
 /** City-wide execution mode from offices.workspace_meta (defaults to cheapest-only). */
 export async function resolveOfficeExecutionMode(officeId: string): Promise<ExecutionMode> {
   const supabase = getSupabaseAdmin();

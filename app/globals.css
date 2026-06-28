@@ -3162,6 +3162,7 @@ button:not(:disabled) {
   cursor: not-allowed;
 }
 
+.workspace-chat-smart-toggle,
 .workspace-chat-turbo-toggle {
   display: inline-flex;
   align-items: center;

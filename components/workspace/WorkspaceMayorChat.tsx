@@ -64,7 +64,7 @@ function buildChatRequestPayload(
   target: WorkspaceChatTarget,
   routeSourceEntityId: string | null,
   orchestrator: CityHallOrchestrator | null,
-  turbo?: boolean,
+  smartEnabled?: boolean,
   attachmentIds?: string[],
 ) {
   if (target.kind === "agent") {
@@ -74,7 +74,7 @@ function buildChatRequestPayload(
       targetAgentId: target.agentId,
       directTargetEntityId: target.chamberRegistryId,
       sourceEntityId: target.chamberRegistryId,
-      turbo,
+      turbo: smartEnabled,
       attachmentIds,
     };
   }
@@ -85,7 +85,7 @@ function buildChatRequestPayload(
       executionMode: mode,
       sourceEntityId: target.registryId,
       ...(isManagerEntry ? {} : { directTargetEntityId: target.registryId }),
-      turbo,
+      turbo: smartEnabled,
       attachmentIds,
     };
   }
@@ -98,7 +98,7 @@ function buildChatRequestPayload(
       targetAgentId: orchestrator.agentId,
       directTargetEntityId: orchestrator.chamberRegistryId,
       ...(mayorSource ? { sourceEntityId: mayorSource } : {}),
-      turbo,
+      turbo: smartEnabled,
       attachmentIds,
     };
   }
@@ -106,7 +106,7 @@ function buildChatRequestPayload(
     taskText: text,
     executionMode: mode,
     ...(mayorSource ? { sourceEntityId: mayorSource } : {}),
-    turbo,
+    turbo: smartEnabled,
     attachmentIds,
   };
 }
@@ -196,7 +196,8 @@ function assistantMessage(
 export function WorkspaceMayorChat() {
   const { dockOpen, expanded, target, openDock, closeDock, toggleExpanded, setExpanded } =
     useWorkspaceChat();
-  const { executionMode, setExecutionMode } = useWorkspaceExecutionMode();
+  const { executionMode, setExecutionMode, smartEnabled, setSmartEnabled } =
+    useWorkspaceExecutionMode();
   const [hasUnreadAnswer, setHasUnreadAnswer] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
@@ -204,7 +205,6 @@ export function WorkspaceMayorChat() {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [turbo, setTurbo] = useState<boolean>(false);
   const [chamberTierCounts, setChamberTierCounts] = useState<{
     free: number;
     cheap: number;
@@ -424,7 +424,7 @@ export function WorkspaceMayorChat() {
     }
 
     let cancelled = false;
-    fetch(`/api/chamber-roster?entityId=${encodeURIComponent(chatSourceEntityId)}&turbo=${turbo}`)
+    fetch(`/api/chamber-roster?entityId=${encodeURIComponent(chatSourceEntityId)}&turbo=${smartEnabled}`)
       .then((r) => r.json())
       .then(
         (data: {
@@ -457,7 +457,7 @@ export function WorkspaceMayorChat() {
     return () => {
       cancelled = true;
     };
-  }, [chatSourceEntityId, turbo]);
+  }, [chatSourceEntityId, smartEnabled]);
 
   const estimate =
     EXECUTION_MODE_OPTIONS.find((o) => o.id === executionMode)?.estimate ??
@@ -490,7 +490,7 @@ export function WorkspaceMayorChat() {
     targetEntityId: string,
   ): Promise<{ targetName: string | null; roster: RosterAgent[] }> {
     const rosterRes = await fetch(
-      `/api/chamber-roster?entityId=${encodeURIComponent(targetEntityId)}&turbo=${turbo}`,
+      `/api/chamber-roster?entityId=${encodeURIComponent(targetEntityId)}&turbo=${smartEnabled}`,
     );
     const rosterJson = (await rosterRes.json()) as {
       chamberName?: string | null;
@@ -527,9 +527,9 @@ export function WorkspaceMayorChat() {
       let rosterEntityId = targetId;
       if (routeSourceEntityId) {
         const [targetRosterRes, sourceRosterRes] = await Promise.all([
-          fetch(`/api/chamber-roster?entityId=${encodeURIComponent(targetId)}&turbo=${turbo}`),
+          fetch(`/api/chamber-roster?entityId=${encodeURIComponent(targetId)}&turbo=${smartEnabled}`),
           fetch(
-            `/api/chamber-roster?entityId=${encodeURIComponent(routeSourceEntityId)}&turbo=${turbo}`,
+            `/api/chamber-roster?entityId=${encodeURIComponent(routeSourceEntityId)}&turbo=${smartEnabled}`,
           ),
         ]);
         const targetRoster = (await targetRosterRes.json()) as {
@@ -544,7 +544,7 @@ export function WorkspaceMayorChat() {
         }
       } else if (chatSourceEntityId && chatSourceEntityId !== targetId) {
         const sourceRosterRes = await fetch(
-          `/api/chamber-roster?entityId=${encodeURIComponent(chatSourceEntityId)}&turbo=${turbo}`,
+          `/api/chamber-roster?entityId=${encodeURIComponent(chatSourceEntityId)}&turbo=${smartEnabled}`,
         );
         const sourceRoster = (await sourceRosterRes.json()) as {
           councilEligible?: boolean;
@@ -555,7 +555,7 @@ export function WorkspaceMayorChat() {
       }
 
       const rosterRes = await fetch(
-        `/api/chamber-roster?entityId=${encodeURIComponent(rosterEntityId)}&turbo=${turbo}`,
+        `/api/chamber-roster?entityId=${encodeURIComponent(rosterEntityId)}&turbo=${smartEnabled}`,
       );
       const roster = (await rosterRes.json()) as {
         chamberName?: string | null;
@@ -739,7 +739,7 @@ export function WorkspaceMayorChat() {
         target,
         routeSourceEntityId,
         cityHallOrchestrator,
-        turbo,
+        smartEnabled,
         attachmentIds.length > 0 ? attachmentIds : undefined,
       );
 
@@ -1212,14 +1212,14 @@ export function WorkspaceMayorChat() {
                   );
                 })}
               </div>
-              <label className="workspace-chat-turbo-toggle">
+              <label className="workspace-chat-smart-toggle">
                 <input
                   type="checkbox"
-                  checked={turbo}
-                  onChange={(e) => setTurbo(e.target.checked)}
-                  data-testid="workspace-turbo-toggle"
+                  checked={smartEnabled}
+                  onChange={(e) => setSmartEnabled(e.target.checked)}
+                  data-testid="workspace-smart-toggle"
                 />
-                <span>Turbo</span>
+                <span>Smart</span>
               </label>
               {target.kind === "mayor" && (
                 <button
