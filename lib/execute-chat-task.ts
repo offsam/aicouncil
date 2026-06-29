@@ -27,6 +27,7 @@ import {
 import { resolveManagerRoutingDecision } from "./manager-routing";
 import { resolveMainChamber } from "./workspace/resolve-main-chamber";
 import {
+  filterInternalChambersBySendTasksConnection,
   listBuildingInternalChambers,
   resolveBuildingRegistryIdForChamber,
 } from "./workspace/building-internal-chambers";
@@ -749,11 +750,17 @@ async function executeManagerTask(
     };
   }
 
-  const internalChambers = await listBuildingInternalChambers(buildingRegistryId);
+  const managerChamberRegistryId =
+    options?.managerChamberRegistryId ?? mainChamber.chamberRegistryId;
+  const allInternalChambers = await listBuildingInternalChambers(buildingRegistryId);
+  const internalChambers = await filterInternalChambersBySendTasksConnection(
+    managerChamberRegistryId,
+    allInternalChambers,
+  );
   const managerDecision = await resolveManagerRoutingDecision(
     taskText,
     buildingRegistryId,
-    mainChamber.chamberRegistryId,
+    managerChamberRegistryId,
     internalChambers,
   );
 
