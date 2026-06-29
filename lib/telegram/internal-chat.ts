@@ -1,5 +1,7 @@
 import type { ExecuteChatTaskResult } from "@/lib/execute-chat-task";
 import { sanitizeUserFacingText, toUserFacingProviderError } from "@/lib/provider-user-error";
+import { requireExternalEntryOfficeId } from "@/lib/workspace/graph-identity-required";
+import { resolveOfficeExecutionMode } from "@/lib/workspace/execution-mode-tiers";
 import { resolveAppBaseUrl } from "./app-base-url";
 
 export type MayorChatRequest = {
@@ -12,6 +14,9 @@ export type MayorChatRequest = {
 export async function postMayorChatViaApi(
   payload: MayorChatRequest,
 ): Promise<ExecuteChatTaskResult> {
+  const officeId = await requireExternalEntryOfficeId();
+  const executionMode = await resolveOfficeExecutionMode(officeId);
+
   const base = resolveAppBaseUrl();
   const res = await fetch(`${base}/api/chat`, {
     method: "POST",
@@ -20,7 +25,7 @@ export async function postMayorChatViaApi(
       taskText: payload.taskText,
       targetAgentId: payload.targetAgentId,
       directTargetEntityId: payload.directTargetEntityId,
-      executionMode: "fast",
+      executionMode,
       conversationId: payload.conversationId,
     }),
   });
