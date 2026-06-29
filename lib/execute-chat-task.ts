@@ -856,7 +856,7 @@ async function executeManagerTask(
         reason: c.name,
       })),
       method: "llm-cheap",
-      agent_count: 0,
+      agent_count: invoked.agent ? 1 : 0,
       outcome: "unrated",
       routing_action: managerDecision.action,
       routing_matched_by: managerDecision.matchedBy,

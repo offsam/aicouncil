@@ -8,52 +8,124 @@ type TierInput = {
   completionPrice?: number | null;
 };
 
-export function inferCatalogCostTier(input: TierInput): CostTier {
+export type CatalogBandSource =
+  | "catalog:free_suffix"
+  | "catalog:groq_non_whisper"
+  | "explicit:llama-3.3-70b-groq"
+  | "explicit:claude-opus"
+  | "explicit:claude-sonnet"
+  | "explicit:claude-haiku"
+  | "explicit:gpt-5"
+  | "explicit:gpt-4.1"
+  | "explicit:gpt-4o"
+  | "explicit:gemini-pro"
+  | "explicit:gemini-flash"
+  | "explicit:deepseek-chat-v3"
+  | "catalog:price_threshold_cheap"
+  | "catalog:price_threshold_mid"
+  | "catalog:price_threshold_premium"
+  | "catalog:default_fallback";
+
+type ExplicitBandRule = {
+  source: CatalogBandSource;
+  band: CostTier;
+  test: (input: TierInput, id: string) => boolean;
+};
+
+/** Fixed band assignments — checked before price/fallback heuristics. */
+const EXPLICIT_MODEL_BAND_RULES: ExplicitBandRule[] = [
+  {
+    source: "explicit:llama-3.3-70b-groq",
+    band: "free",
+    test: (input, id) =>
+      input.gateway === "groq" && /\bllama-3\.3-70b-versatile\b/.test(id),
+  },
+  {
+    source: "explicit:claude-opus",
+    band: "premium",
+    test: (_, id) => /\bclaude-opus/i.test(id),
+  },
+  {
+    source: "explicit:claude-sonnet",
+    band: "mid",
+    test: (_, id) => /\bclaude-sonnet/i.test(id),
+  },
+  {
+    source: "explicit:claude-haiku",
+    band: "cheap",
+    test: (_, id) => /\bclaude-haiku/i.test(id),
+  },
+  {
+    source: "explicit:gpt-5",
+    band: "premium",
+    test: (_, id) => /\bgpt-5/i.test(id),
+  },
+  {
+    source: "explicit:gpt-4.1",
+    band: "mid",
+    test: (_, id) => /\bgpt-4\.1/i.test(id),
+  },
+  {
+    source: "explicit:gpt-4o",
+    band: "mid",
+    test: (_, id) => /\bgpt-4o\b(?!-mini)/i.test(id),
+  },
+  {
+    source: "explicit:gemini-pro",
+    band: "premium",
+    test: (_, id) => /\bgemini-[\d.]+-pro/i.test(id),
+  },
+  {
+    source: "explicit:gemini-flash",
+    band: "cheap",
+    test: (_, id) => /\bgemini-[\d.]+-flash/i.test(id),
+  },
+  {
+    source: "explicit:deepseek-chat-v3",
+    band: "mid",
+    test: (_, id) => /\bdeepseek-chat\b|\bdeepseek-v3\b/i.test(id),
+  },
+];
+
+export function inferCatalogCostTierWithSource(
+  input: TierInput,
+): { band: CostTier; source: CatalogBandSource } {
   const id = input.modelId.toLowerCase();
 
   if (id.includes(":free") || id.endsWith("-free")) {
-    return "free";
+    return { band: "free", source: "catalog:free_suffix" };
   }
 
-  if (
-    input.gateway === "groq" &&
-    !id.includes("whisper") &&
-    !id.includes("guard")
-  ) {
-    return "free";
+  if (input.gateway === "groq" && !id.includes("whisper") && !id.includes("guard")) {
+    return { band: "free", source: "catalog:groq_non_whisper" };
+  }
+
+  for (const rule of EXPLICIT_MODEL_BAND_RULES) {
+    if (rule.test(input, id)) {
+      return { band: rule.band, source: rule.source };
+    }
   }
 
   const prompt = input.promptPrice ?? 0;
   const completion = input.completionPrice ?? 0;
   const maxPrice = Math.max(prompt, completion);
 
-  if (maxPrice === 0 && input.gateway === "openrouter") {
-    return "free";
-  }
-
-  if (
-    /\b(opus|o[134]|gpt-4|pro-preview|ultra|405b|235b|120b|gpt-oss-120)\b/.test(id)
-  ) {
-    return "premium";
-  }
-
-  if (
-    /\b(haiku|flash-lite|lite|mini|small|8b|7b|1b|1\.2b|nano|free)\b/.test(id)
-  ) {
-    return "cheap";
-  }
-
+  // Hard guard: missing/zero price is NOT free unless :free suffix or groq (handled above).
   if (maxPrice > 0) {
-    if (maxPrice <= 0.0000005) return "cheap";
-    if (maxPrice <= 0.000003) return "mid";
-    return "premium";
+    if (maxPrice <= 0.0000005) {
+      return { band: "cheap", source: "catalog:price_threshold_cheap" };
+    }
+    if (maxPrice <= 0.000003) {
+      return { band: "mid", source: "catalog:price_threshold_mid" };
+    }
+    return { band: "premium", source: "catalog:price_threshold_premium" };
   }
 
-  if (/\b(sonnet|flash|70b|27b|32b|medium|standard)\b/.test(id)) {
-    return "mid";
-  }
+  return { band: "cheap", source: "catalog:default_fallback" };
+}
 
-  return "cheap";
+export function inferCatalogCostTier(input: TierInput): CostTier {
+  return inferCatalogCostTierWithSource(input).band;
 }
 
 export function parseOpenRouterPrice(value: unknown): number | null {
