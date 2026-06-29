@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AI_COUNCIL_OFFICE_ID } from "@/lib/ai-council-ids";
+import { AGENT_COUNT_LABEL_OFFICE_CATALOG } from "@/lib/agent-count-labels";
 import { KNOWLEDGE_FILE_ACCEPT } from "@/lib/knowledge/prepare-knowledge-file";
 import { uploadKnowledgeFile, attachKnowledgeFile } from "@/lib/knowledge/upload-knowledge-file-client";
 import type { AgentAssignmentRow, ConnectionPermissionRow } from "@/lib/office-types";
@@ -33,7 +34,9 @@ import { isCityHallBuilding } from "@/lib/workspace/city-hall-building";
 import { isTechDepartmentBuilding } from "@/lib/workspace/tech-department";
 import { DEFAULT_TECH_DEPARTMENT_VISIBLE_COUNTERS } from "@/lib/workspace/tech-department-counters";
 import { AGENT_NODE_DIAMETER_PX } from "@/lib/workspace/agent-layout";
+import { workspaceConnectionUrl } from "@/lib/workspace/workspace-bff-paths";
 import { ArchivePanel } from "./ArchivePanel";
+import { SystemLlmRolesPanel } from "@/components/workspace/inspector/SystemLlmRolesPanel";
 import { TechDepartmentStatsPanel } from "@/components/workspace/nodes/TechDepartmentStatsPanel";
 import { ContextPreviewSection } from "./ContextPreviewSection";
 import { InspectorBasicView } from "./inspector/InspectorBasicView";
@@ -788,7 +791,7 @@ export function WorkspaceInspector() {
     setSavingConn(true);
     setError(null);
     try {
-      const res = await fetch(`/api/connections/${selectedTarget.connectionId}`, {
+      const res = await fetch(workspaceConnectionUrl(selectedTarget.connectionId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -819,7 +822,7 @@ export function WorkspaceInspector() {
     setDeletingConn(true);
     setError(null);
     try {
-      const res = await fetch(`/api/connections/${selectedTarget.connectionId}`, {
+      const res = await fetch(workspaceConnectionUrl(selectedTarget.connectionId), {
         method: "DELETE",
       });
       const body = (await res.json()) as { error?: string };
@@ -1095,7 +1098,7 @@ export function WorkspaceInspector() {
               </div>
             </div>
             <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-3">
-              <div className="text-[10px] uppercase text-stone-500">Agents</div>
+              <div className="text-[10px] uppercase text-stone-500">{AGENT_COUNT_LABEL_OFFICE_CATALOG}</div>
               <div className="mt-1 text-xl font-semibold text-emerald-200">
                 {cityStatsLoading ? "…" : cityAgentCount ?? 0}
               </div>
@@ -1518,6 +1521,14 @@ export function WorkspaceInspector() {
                     <TechDepartmentStatsPanel
                       visibleCounterIds={DEFAULT_TECH_DEPARTMENT_VISIBLE_COUNTERS}
                     />
+                  </Section>
+                )}
+
+                {selectedTarget.kind === "building" &&
+                  isCityHallTarget &&
+                  inspectorMode === "professional" && (
+                  <Section title="Служебные LLM-роли" defaultOpen>
+                    <SystemLlmRolesPanel officeId={selectedTarget.officeId} />
                   </Section>
                 )}
 

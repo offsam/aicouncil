@@ -1,49 +1,17 @@
 import { getSupabaseAdmin } from "../supabase/admin";
 import { requireExternalEntryOfficeId } from "../workspace/graph-identity-required";
-import type { StructureAction, TechStructurePlan } from "./structure-types";
+import { invokeCheapLLM } from "../cheap-llm";
+import {
+  analyzeDestructiveStructureImpact,
+  persistStructureBeforeSnapshot,
+} from "./structure-impact";
+import type { StructureAction, StructurePlanKind, TechStructurePlan } from "./structure-types";
+import { planHasDestructiveActions } from "./structure-types";
 
-async function callCheapLLM(prompt: string): Promise<string> {
-  if (process.env.GROQ_API_KEY) {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        response_format: { type: "json_object" },
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.1,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error?.message || `Groq API ${response.status}`);
-    }
-    return data.choices?.[0]?.message?.content || "";
-  }
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  if (process.env.GOOGLE_API_KEY) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      },
-    );
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error?.message || `Gemini API ${response.status}`);
-    }
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  }
-
-  throw new Error("No cheap LLM key configured for structure planning");
-}
-
-function parseActions(raw: unknown): StructureAction[] {
+function parseCreateActions(raw: unknown): StructureAction[] {
   if (!Array.isArray(raw)) return [];
   const actions: StructureAction[] = [];
   for (const item of raw) {
@@ -119,12 +87,114 @@ function parseActions(raw: unknown): StructureAction[] {
   return actions;
 }
 
+function parseDestructiveActions(raw: unknown): StructureAction[] {
+  if (!Array.isArray(raw)) return [];
+  const actions: StructureAction[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const type = row.type;
+    const description = String(row.description ?? "").trim() || "Действие";
+
+    if (type === "delete_building") {
+      const building_id = String(row.building_id ?? "").trim();
+      if (!UUID_RE.test(building_id)) continue;
+      actions.push({ type: "delete_building", description, building_id });
+    } else if (type === "delete_chamber") {
+      const chamber_registry_id = String(row.chamber_registry_id ?? row.chamber_id ?? "").trim();
+      if (!UUID_RE.test(chamber_registry_id)) continue;
+      actions.push({ type: "delete_chamber", description, chamber_registry_id });
+    } else if (type === "delete_connection") {
+      const connection_id = String(row.connection_id ?? "").trim();
+      if (!UUID_RE.test(connection_id)) continue;
+      actions.push({ type: "delete_connection", description, connection_id });
+    } else if (type === "unassign_agent") {
+      const agent_id = String(row.agent_id ?? "").trim();
+      const chamber_ref = String(row.chamber_ref ?? "").trim();
+      if (!UUID_RE.test(agent_id) || !UUID_RE.test(chamber_ref)) continue;
+      actions.push({ type: "unassign_agent", description, agent_id, chamber_ref });
+    }
+  }
+  return actions;
+}
+
+const PLACEHOLDER_ACTION_DESCRIPTIONS = new Set(["действие", "action", "шаг", "step"]);
+
+function assertConfirmableStructureActions(actions: StructureAction[]): void {
+  if (actions.length === 0) {
+    throw new Error("Planner returned empty action list");
+  }
+  const allPlaceholder = actions.every((action) =>
+    PLACEHOLDER_ACTION_DESCRIPTIONS.has(action.description.trim().toLowerCase()),
+  );
+  if (allPlaceholder) {
+    throw new Error("Planner returned placeholder-only actions");
+  }
+}
+
 function formatActionList(actions: StructureAction[]): string {
   return actions.map((a, i) => `${i + 1}. [${a.type}] ${a.description}`).join("\n");
 }
 
+async function storeStructurePlan(params: {
+  taskText: string;
+  summary: string;
+  actions: StructureAction[];
+  planKind: StructurePlanKind;
+  impactAnalysis?: TechStructurePlan["impactAnalysis"];
+  snapshotId?: string;
+}): Promise<{ planId: string; expiresAt: string }> {
+  const supabase = getSupabaseAdmin();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+  const { data: row, error } = await supabase
+    .from("tech_structure_plans")
+    .insert({
+      task_text: params.taskText,
+      plan_summary: params.summary,
+      actions: params.actions,
+      status: "pending",
+      expires_at: expiresAt,
+      plan_kind: params.planKind,
+      impact_analysis: params.impactAnalysis ?? null,
+      snapshot_id: params.snapshotId ?? null,
+    })
+    .select("id, expires_at")
+    .single();
+
+  if (error || !row) {
+    throw new Error(error?.message ?? "Failed to store structure plan");
+  }
+
+  return { planId: row.id, expiresAt: row.expires_at ?? expiresAt };
+}
+
+async function attachDestructiveImpactAndSnapshot(
+  planId: string,
+  officeId: string,
+  actions: StructureAction[],
+): Promise<{ impactAnalysis: TechStructurePlan["impactAnalysis"]; snapshotId: string }> {
+  const { impact, entities } = await analyzeDestructiveStructureImpact(actions);
+  const snapshotId = await persistStructureBeforeSnapshot({ planId, officeId, entities });
+
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase
+    .from("tech_structure_plans")
+    .update({
+      impact_analysis: impact,
+      snapshot_id: snapshotId,
+    })
+    .eq("id", planId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return { impactAnalysis: impact, snapshotId };
+}
+
 /**
- * Parse user command into a pending structure plan (no DB writes except plan storage).
+ * Parse user command into a pending create-only structure plan (no DB writes except plan storage).
  */
 export async function createTechStructurePlan(taskText: string): Promise<TechStructurePlan> {
   const supabase = getSupabaseAdmin();
@@ -175,59 +245,212 @@ ${(agents ?? []).map((a) => `- ${a.id} ${a.name} (${a.provider})`).join("\n")}
 
 User command: "${taskText.replace(/"/g, '\\"')}"`;
 
-  const responseText = await callCheapLLM(prompt);
+  const responseText = await invokeCheapLLM({
+    purpose: "tech-structure-plan",
+    prompt,
+    responseFormat: "json",
+    officeId,
+  });
   const jsonMatch = responseText.trim().match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error("Planner did not return JSON");
   }
 
   const parsed = JSON.parse(jsonMatch[0]) as { summary?: string; actions?: unknown };
-  const actions = parseActions(parsed.actions);
-  if (actions.length === 0) {
-    throw new Error("Planner returned empty action list");
-  }
+  const actions = parseCreateActions(parsed.actions);
+  assertConfirmableStructureActions(actions);
 
   const summary =
     String(parsed.summary ?? "").trim() ||
     `План из ${actions.length} шагов:\n${formatActionList(actions)}`;
 
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-
-  const { data: row, error } = await supabase
-    .from("tech_structure_plans")
-    .insert({
-      task_text: taskText,
-      plan_summary: summary,
-      actions,
-      status: "pending",
-      expires_at: expiresAt,
-    })
-    .select("id, expires_at")
-    .single();
-
-  if (error || !row) {
-    throw new Error(error?.message ?? "Failed to store structure plan");
-  }
-
-  return {
-    planId: row.id,
+  const { planId, expiresAt } = await storeStructurePlan({
     taskText,
     summary,
     actions,
-    expiresAt: row.expires_at ?? expiresAt,
+    planKind: "create",
+  });
+
+  return {
+    planId,
+    taskText,
+    summary,
+    actions,
+    expiresAt,
+    planKind: "create",
+  };
+}
+
+/**
+ * TD-03B: destructive plan + impact analysis + before-snapshot (non-executable).
+ */
+export async function createDestructiveStructurePlan(taskText: string): Promise<TechStructurePlan> {
+  const supabase = getSupabaseAdmin();
+  const officeId = await requireExternalEntryOfficeId();
+
+  const [{ data: buildings }, { data: chambers }, { data: connections }, { data: agents }] =
+    await Promise.all([
+      supabase
+        .from("entity_registry")
+        .select("id, name, slug, routing_description")
+        .eq("entity_type", "building"),
+      supabase
+        .from("entity_registry")
+        .select("id, name, slug, parent_entity_id, routing_description")
+        .eq("entity_type", "chamber"),
+      supabase.from("connections").select("id, source_entity_id, target_entity_id, is_active"),
+      supabase.from("agents").select("id, name, provider").eq("office_id", officeId),
+    ]);
+
+  const prompt = `You are the Tech Department destructive planner. The user wants to REMOVE or UNASSIGN workspace structure. Produce JSON ONLY:
+{
+  "summary": "human-readable destructive plan in Russian for user confirmation",
+  "actions": [
+    {
+      "type": "delete_building" | "delete_chamber" | "delete_connection" | "unassign_agent",
+      "description": "what this step does"
+      ... type-specific UUID fields ...
+    }
+  ]
+}
+
+Allowed action types ONLY:
+- delete_building: requires building_id (entity_registry UUID of building)
+- delete_chamber: requires chamber_registry_id (entity_registry UUID of chamber)
+- delete_connection: requires connection_id (connections.id UUID)
+- unassign_agent: requires agent_id + chamber_ref (chamber entity_registry UUID). NEVER delete from global agents catalog.
+
+FORBIDDEN: delete_agent, remove_agent_from_catalog, any action that deletes rows from agents table.
+
+Reference existing entities by exact UUID from lists below.
+
+Existing buildings:
+${(buildings ?? []).map((b) => `- ${b.id} ${b.name}`).join("\n")}
+
+Existing chambers:
+${(chambers ?? []).map((c) => `- ${c.id} ${c.name} parent=${c.parent_entity_id}`).join("\n")}
+
+Existing connections:
+${(connections ?? []).map((c) => `- ${c.id} ${c.source_entity_id} → ${c.target_entity_id} active=${c.is_active}`).join("\n")}
+
+Agents (for unassign_agent only — do NOT delete agent records):
+${(agents ?? []).map((a) => `- ${a.id} ${a.name}`).join("\n")}
+
+User command: "${taskText.replace(/"/g, '\\"')}"`;
+
+  const responseText = await invokeCheapLLM({
+    purpose: "tech-structure-plan-destructive",
+    prompt,
+    responseFormat: "json",
+    officeId,
+  });
+  const jsonMatch = responseText.trim().match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error("Destructive planner did not return JSON");
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]) as { summary?: string; actions?: unknown };
+  const actions = parseDestructiveActions(parsed.actions);
+  assertConfirmableStructureActions(actions);
+
+  if (!planHasDestructiveActions(actions)) {
+    throw new Error("Destructive planner returned no destructive actions");
+  }
+
+  const summary =
+    String(parsed.summary ?? "").trim() ||
+    `План удаления (${actions.length} шагов):\n${formatActionList(actions)}`;
+
+  const { planId, expiresAt } = await storeStructurePlan({
+    taskText,
+    summary,
+    actions,
+    planKind: "destructive",
+  });
+
+  const { impactAnalysis, snapshotId } = await attachDestructiveImpactAndSnapshot(
+    planId,
+    officeId,
+    actions,
+  );
+
+  return {
+    planId,
+    taskText,
+    summary,
+    actions,
+    expiresAt,
+    planKind: "destructive",
+    impactAnalysis,
+    snapshotId,
   };
 }
 
 export function formatStructurePlanForUser(plan: TechStructurePlan): string {
+  const isDestructive = plan.planKind === "destructive";
   const lines = [
-    "Технический отдел подготовил план изменений. Подтвердите выполнение:",
+    isDestructive
+      ? "Технический отдел подготовил план удаления. Подтвердите выполнение:"
+      : "Технический отдел подготовил план изменений. Подтвердите выполнение:",
     "",
     plan.summary,
     "",
     "Детали:",
-    ...plan.actions.map((a, i) => `${i + 1}. ${a.description}`),
-    "",
-    "Без подтверждения изменения в базу не вносятся.",
+    ...plan.actions.map((a, i) => `${i + 1}. [${a.type}] ${a.description}`),
   ];
+
+  if (plan.impactAnalysis?.summaryLines.length) {
+    lines.push("", "Анализ последствий (каскад):", ...plan.impactAnalysis.summaryLines);
+  }
+
+  if (plan.snapshotId) {
+    lines.push("", `Before-snapshot сохранён: ${plan.snapshotId}`);
+  }
+
+  lines.push(
+    "",
+    isDestructive
+      ? "Подтвердите выполнение — удаление необратимо (before-snapshot сохранён для диагностики)."
+      : "Без подтверждения изменения в базу не вносятся.",
+  );
+
   return lines.join("\n");
+}
+
+/** Deterministic destructive plan for tests (bypasses LLM). */
+export async function createDestructiveStructurePlanFromActions(
+  taskText: string,
+  actions: StructureAction[],
+): Promise<TechStructurePlan> {
+  if (!planHasDestructiveActions(actions)) {
+    throw new Error("Actions must include at least one destructive step");
+  }
+  assertConfirmableStructureActions(actions);
+
+  const officeId = await requireExternalEntryOfficeId();
+  const summary = `Тестовый план удаления:\n${formatActionList(actions)}`;
+
+  const { planId, expiresAt } = await storeStructurePlan({
+    taskText,
+    summary,
+    actions,
+    planKind: "destructive",
+  });
+
+  const { impactAnalysis, snapshotId } = await attachDestructiveImpactAndSnapshot(
+    planId,
+    officeId,
+    actions,
+  );
+
+  return {
+    planId,
+    taskText,
+    summary,
+    actions,
+    expiresAt,
+    planKind: "destructive",
+    impactAnalysis,
+    snapshotId,
+  };
 }

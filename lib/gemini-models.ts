@@ -18,10 +18,17 @@ export type GeminiPart =
   | { text: string }
   | { inline_data: { mime_type: string; data: string } };
 
+export type GeminiCallOpts = {
+  parts: GeminiPart[];
+  systemPrompt?: string;
+  maxOutputTokens?: number;
+  temperature?: number;
+};
+
 type GeminiRequestBody = {
   contents: Array<{ parts: GeminiPart[] }>;
   systemInstruction?: { parts: Array<{ text: string }> };
-  generationConfig?: { maxOutputTokens: number };
+  generationConfig?: { maxOutputTokens?: number; temperature?: number };
 };
 
 function extractAnswer(data: {
@@ -85,18 +92,21 @@ async function callGeminiOnce(
  */
 export async function callGeminiWithFallback(
   primaryModel: string,
-  opts: {
-    parts: GeminiPart[];
-    systemPrompt?: string;
-    maxOutputTokens?: number;
-  },
+  opts: GeminiCallOpts,
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_API_KEY missing");
 
+  const generationConfig: GeminiRequestBody["generationConfig"] = {
+    maxOutputTokens: opts.maxOutputTokens ?? 2048,
+  };
+  if (opts.temperature !== undefined) {
+    generationConfig.temperature = opts.temperature;
+  }
+
   const body: GeminiRequestBody = {
     contents: [{ parts: opts.parts }],
-    generationConfig: { maxOutputTokens: opts.maxOutputTokens ?? 2048 },
+    generationConfig,
     ...(opts.systemPrompt
       ? { systemInstruction: { parts: [{ text: opts.systemPrompt }] } }
       : {}),

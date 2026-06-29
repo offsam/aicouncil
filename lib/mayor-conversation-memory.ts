@@ -28,6 +28,13 @@ export function formatTelegramMayorConversationId(chatId: number | string): stri
   return `telegram:${String(chatId)}`;
 }
 
+/** Web workspace Mayor chat scope — one stable thread per browser storage token. */
+export function formatWorkspaceMayorConversationId(sessionToken: string): string {
+  const token = sessionToken.trim();
+  if (!token) throw new Error("sessionToken is required");
+  return `workspace:mayor:${token}`;
+}
+
 export async function loadMayorConversationHistory(
   conversationId: string,
   limit = MAYOR_CONVERSATION_MAX_MESSAGES,

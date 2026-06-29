@@ -14,7 +14,11 @@ import { invokeAgentForWorkflow } from "./invoke-agent";
 import { writeChamberArchiveEntry } from "./chamber-archive";
 import { normalizeCostTier } from "./cost-tier";
 import { GENERAL_INTAKE_ID } from "./route-agent-ids";
-import { updateRoutingLogAgentCount, logMayorRoutingDecision } from "./routing";
+import { updateRoutingLogAgentCount, logMayorRoutingDecision, logDirectAgentRoutingDecision } from "./routing";
+import { computeOfficeInventoryCounts } from "./office-inventory-counts";
+import { formatMayorOfficeSnapshotPrompt, isOfficeInventoryCountQuestion, isSystemReadOnlyQuestion, formatMayorInventoryAnswer, OFFICE_INVENTORY_SNAPSHOT_REASONING, OFFICE_INVENTORY_SNAPSHOT_TRACE } from "./mayor-office-snapshot";
+import { isStructureMutationCommand } from "./structure-command-intent";
+import { resolveStructureCommandAnaphora } from "./structure-anaphora-resolver";
 import { getSupabaseAdmin } from "./supabase/admin";
 import type { RouteDecision, MayorRoutingDecision } from "./office-types";
 import { processTask } from "./workflow-orchestrator";
@@ -23,6 +27,8 @@ import {
   mayorRoutingLogAction,
   parseMayorAgentRoutingEnvelope,
   resolveDeterministicMayorRoutingDecision,
+  resolveStructureMutationMayorRoutingDecision,
+  resolveSystemReadOnlyMayorRoutingDecision,
 } from "./mayor-routing";
 import { resolveManagerRoutingDecision } from "./manager-routing";
 import { resolveMainChamber } from "./workspace/resolve-main-chamber";
@@ -32,6 +38,7 @@ import {
   resolveBuildingRegistryIdForChamber,
 } from "./workspace/building-internal-chambers";
 import { isMainChamber } from "./workspace/is-main-chamber";
+import { resolveCityHallMainAgent } from "./workspace/city-hall-orchestrator";
 import {
   buildMayorExecutiveSystemPrompt,
   MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER,
@@ -45,7 +52,9 @@ import {
   type MayorConversationMessageKind,
 } from "./mayor-conversation-memory";
 import { sanitizeUserFacingText, toUserFacingProviderError } from "./provider-user-error";
+import { assertAgentContextAccess } from "./security/agent-context-access";
 import { buildManagerSummaryPrompt } from "./agent-persona";
+import { invokeCheapLLM } from "./cheap-llm";
 import { isMayorAgent as isMayorAgentByGraph } from "./workspace/graph-identity";
 import {
   requireExternalEntryOfficeId,
@@ -53,6 +62,11 @@ import {
   requireTechDepartmentMainChamberRegistryId,
 } from "./workspace/graph-identity-required";
 import { classifyTechDepartmentIntent } from "./tech-department/intent";
+import {
+  CHAT_COMPOUND_DESTRUCTIVE_CREATE_ANSWER,
+  hasCompoundDestructiveCreateStructureIntent,
+  hasDestructiveStructureIntent,
+} from "./structure-command-intent";
 import {
   buildCodeAuditSnapshot,
   formatCodeAuditSnapshotForPrompt,
@@ -63,6 +77,7 @@ import {
   TECH_DEPARTMENT_DIAGNOSTIC_ANSWER_PREFIX,
 } from "./tech-department/diagnostic-context";
 import {
+  createDestructiveStructurePlan,
   createTechStructurePlan,
   formatStructurePlanForUser,
 } from "./tech-department/structure-plan";
@@ -250,7 +265,7 @@ async function executeFastMode(
     .maybeSingle();
 
   if (decision.routingLogId) {
-    await updateRoutingLogAgentCount(decision.routingLogId, parallel.invokedCount);
+    await updateRoutingLogAgentCount(decision.routingLogId, parallel.invokedCount, "fast");
     decision.agentCount = parallel.invokedCount;
   }
 
@@ -283,7 +298,7 @@ async function executeFastMode(
   return {
     mode: "single",
     executionMode: "fast",
-    answer: `${partialBanner}${answer}`,
+    answer,
     routing: decision,
     targetName: targetRow?.name ?? null,
     agentName: `${successCount} free-агентов`,
@@ -334,7 +349,7 @@ async function executeTeamMode(
 
   const invokedCount = parallel.invokedCount;
   if (decision.routingLogId) {
-    await updateRoutingLogAgentCount(decision.routingLogId, invokedCount);
+    await updateRoutingLogAgentCount(decision.routingLogId, invokedCount, "team");
     decision.agentCount = invokedCount;
   }
 
@@ -387,7 +402,7 @@ async function executeTeamMode(
     ? `⚠ Частичный результат: ${successCount} из ${invokedCount} экспертов ответили. Сводка по доступным данным.\n\n`
     : "";
 
-  const answer = `${partialBanner}${summary}`;
+  const answer = summary;
 
   const supabase = getSupabaseAdmin();
   const { data: targetRow } = await supabase
@@ -399,7 +414,7 @@ async function executeTeamMode(
   await archiveChamberAnswer({
     entityRegistryId: chosenTargetId,
     taskText,
-    answer,
+    answer: `${partialBanner}${summary}`,
     agentName: `${successCount} экспертов`,
     chamberName: targetRow?.name ?? null,
   });
@@ -451,7 +466,7 @@ async function executeCouncilMode(
 
   const invokedCount = parallel.invokedCount;
   if (decision.routingLogId) {
-    await updateRoutingLogAgentCount(decision.routingLogId, invokedCount);
+    await updateRoutingLogAgentCount(decision.routingLogId, invokedCount, "council");
     decision.agentCount = invokedCount;
   }
 
@@ -506,7 +521,7 @@ async function executeCouncilMode(
       : `⚠ Частичный Council: только 1 из ${invokedCount} экспертов ответил.\n\n`
     : "";
 
-  const answer = `${partialBanner}${answerBody}`;
+  const answer = answerBody;
 
   const supabase = getSupabaseAdmin();
   const { data: targetRow } = await supabase
@@ -518,7 +533,7 @@ async function executeCouncilMode(
   await archiveChamberAnswer({
     entityRegistryId: chosenTargetId,
     taskText,
-    answer,
+    answer: `${partialBanner}${answerBody}`,
     agentName: `${successCount} экспертов`,
     chamberName: targetRow?.name ?? null,
   });
@@ -548,6 +563,9 @@ async function executeDirectAgentMode(
   chamberRegistryId: string,
 ): Promise<ExecuteChatTaskResult> {
   const supabase = getSupabaseAdmin();
+  const officeId = await requireExternalEntryOfficeId();
+  await assertAgentContextAccess({ officeId, agentId: agentRegistryId, chamberRegistryId });
+
   const [{ data: agentReg }, { data: agentRow }, { data: chamberRow }] = await Promise.all([
     supabase.from("entity_registry").select("slug, name").eq("id", agentRegistryId).maybeSingle(),
     supabase.from("agents").select("name, cost_tier").eq("id", agentRegistryId).maybeSingle(),
@@ -557,6 +575,13 @@ async function executeDirectAgentMode(
   if (!agentReg?.slug) {
     throw new Error("Агент не найден");
   }
+
+  const routingLogId = await logDirectAgentRoutingDecision({
+    taskText,
+    directAgentId: agentRegistryId,
+    directTargetEntityId: chamberRegistryId,
+    agentCount: 0,
+  });
 
   const invoked = await invokeChamberAgentWithFreeFallback({
     chamberRegistryId: chamberRegistryId,
@@ -569,6 +594,10 @@ async function executeDirectAgentMode(
       },
     });
 
+  if (routingLogId) {
+    await updateRoutingLogAgentCount(routingLogId, 1, "fast");
+  }
+
   const decision: RouteDecision = {
     targets: [
       {
@@ -577,8 +606,9 @@ async function executeDirectAgentMode(
         reason: "direct_agent",
       },
     ],
-    method: "rule-based",
-    agentCount: 0,
+    method: "direct_agent",
+    agentCount: 1,
+    routingLogId: routingLogId ?? undefined,
   };
 
   await archiveChamberAnswer({
@@ -635,42 +665,6 @@ async function loadSelectedAgent(agentId: string): Promise<SelectedAgent | null>
   };
 }
 
-async function callCheapLLM(prompt: string): Promise<string> {
-  if (process.env.GROQ_API_KEY) {
-    const apiKey = process.env.GROQ_API_KEY;
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.3,
-      }),
-    });
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "";
-  } else if (process.env.GOOGLE_API_KEY) {
-    const apiKey = process.env.GOOGLE_API_KEY;
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
-    );
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  } else {
-    throw new Error("No cheap LLM key configured for summarization");
-  }
-}
-
 async function resolveManagerEntry(
   sourceEntityId?: string,
   directTargetEntityId?: string,
@@ -711,6 +705,7 @@ async function executeManagerTask(
     managerChamberRegistryId?: string;
     executionMode?: ExecutionMode;
     forceFailSlugs?: string[];
+    officeId?: string;
   },
 ): Promise<ExecuteChatTaskResult> {
   const supabase = getSupabaseAdmin();
@@ -762,6 +757,7 @@ async function executeManagerTask(
     buildingRegistryId,
     managerChamberRegistryId,
     internalChambers,
+    { officeId: options?.officeId },
   );
 
   const executionChamberRegistryId =
@@ -835,14 +831,18 @@ async function executeManagerTask(
           .eq("id", executionChamberRegistryId)
           .maybeSingle(),
       ]);
-      const summarized = await callCheapLLM(
-        buildManagerSummaryPrompt({
+      const summarized = await invokeCheapLLM({
+        purpose: "manager-summary",
+        prompt: buildManagerSummaryPrompt({
           buildingName: buildingRow?.name ?? "the building",
           departmentName: deptRow?.name ?? "internal chamber",
           taskText,
           departmentAnswer: invoked.answer,
         }),
-      );
+        responseFormat: "text",
+        temperature: 0.3,
+        officeId: options?.officeId,
+      });
       if (summarized?.trim()) {
         finalAnswer = summarized.trim();
         summaryApplied = true;
@@ -865,6 +865,7 @@ async function executeManagerTask(
       method: "llm-cheap",
       agent_count: invoked.agent ? 1 : 0,
       outcome: "unrated",
+      execution_mode: executionMode,
       routing_action: managerDecision.action,
       routing_matched_by: managerDecision.matchedBy,
       routing_confidence: managerDecision.confidence,
@@ -943,7 +944,55 @@ async function executeTechDepartmentTask(
   const intent = classifyTechDepartmentIntent(taskText);
 
   if (intent === "structure") {
-    const plan = await createTechStructurePlan(taskText);
+    const destructive = hasDestructiveStructureIntent(taskText);
+    const compoundDestructiveCreate = hasCompoundDestructiveCreateStructureIntent(taskText);
+
+    if (compoundDestructiveCreate) {
+      const { data: logRow } = await supabase
+        .from("routing_logs")
+        .insert({
+          task_text: taskText,
+          chosen_target_entity_registry_id: mainChamber.chamberRegistryId,
+          all_candidates: [],
+          method: "tech-structure-compound-blocked",
+          agent_count: 0,
+          outcome: "unrated",
+          execution_mode: "fast",
+          routing_action: "structure_compound_blocked",
+          routing_reasoning:
+            "Compound destructive+create structure command blocked before planner (PLANNER-COMPOUND-1B)",
+          routing_trace: ["tech_department", "structure", "compound_blocked"],
+          delegated_building_id: techBuildingId,
+          delegated_chamber_id: mainChamber.chamberRegistryId,
+        })
+        .select("id")
+        .single();
+
+      return {
+        mode: "single",
+        executionMode: "fast",
+        answer: CHAT_COMPOUND_DESTRUCTIVE_CREATE_ANSWER,
+        routing: {
+          targets: [
+            {
+              entityRegistryId: mainChamber.chamberRegistryId,
+              confidence: 1,
+              reason: "structure_compound_blocked",
+            },
+          ],
+          method: "tech-structure-compound-blocked",
+          agentCount: 0,
+          routingLogId: logRow?.id,
+        },
+        targetName: "Технический отдел",
+        agentName: null,
+        agentId: null,
+      };
+    }
+
+    const plan = destructive
+      ? await createDestructiveStructurePlan(taskText)
+      : await createTechStructurePlan(taskText);
     const answer = formatStructurePlanForUser(plan);
 
     const { data: logRow } = await supabase
@@ -955,9 +1004,14 @@ async function executeTechDepartmentTask(
         method: "tech-structure-plan",
         agent_count: 0,
         outcome: "unrated",
-        routing_action: "structure_plan",
-        routing_reasoning: "Tech Department structure plan pending confirmation",
-        routing_trace: ["tech_department", "structure", "pending_confirmation"],
+        execution_mode: "fast",
+        routing_action: destructive ? "structure_destructive_plan" : "structure_plan",
+        routing_reasoning: destructive
+          ? "Tech Department destructive plan pending confirmation (non-executable TD-03B)"
+          : "Tech Department structure plan pending confirmation",
+        routing_trace: destructive
+          ? ["tech_department", "structure", "destructive_plan", "pending_confirmation"]
+          : ["tech_department", "structure", "pending_confirmation"],
         delegated_building_id: techBuildingId,
         delegated_chamber_id: mainChamber.chamberRegistryId,
       })
@@ -973,7 +1027,7 @@ async function executeTechDepartmentTask(
           {
             entityRegistryId: mainChamber.chamberRegistryId,
             confidence: 1,
-            reason: "tech_structure_plan",
+            reason: destructive ? "tech_structure_destructive_plan" : "tech_structure_plan",
           },
         ],
         method: "tech-structure-plan",
@@ -1011,6 +1065,7 @@ async function executeTechDepartmentTask(
           method: "tech-code-audit",
           agent_count: 0,
           outcome: "unrated",
+          execution_mode: executionMode,
           routing_action: "code_audit",
           routing_reasoning: "Tech Department code audit blocked — GitHub auth failure",
           routing_trace: ["tech_department", "code_audit", "github_auth_error"],
@@ -1061,6 +1116,7 @@ async function executeTechDepartmentTask(
         method: "tech-code-audit",
         agent_count: 1,
         outcome: "unrated",
+        execution_mode: executionMode,
         routing_action: "code_audit",
         routing_reasoning: "Tech Department code audit read-only (GitHub)",
         routing_trace: ["tech_department", "code_audit"],
@@ -1127,6 +1183,7 @@ async function executeTechDepartmentTask(
       method: "llm-cheap",
       agent_count: 1,
       outcome: "unrated",
+      execution_mode: executionMode,
       routing_action: "diagnose",
       routing_reasoning: "Tech Department diagnostic read-only",
       routing_trace: ["tech_department", "diagnose"],
@@ -1198,6 +1255,39 @@ async function wrapMayorResultWithConversationMemory(
   return result;
 }
 
+async function buildMayorClarificationResult(params: {
+  reason: string;
+  mayorAgentId: string;
+  mayorChamberRegistryId: string;
+  mayorExecutionMode: ExecutionMode;
+}): Promise<ExecuteChatTaskResult> {
+  const supabase = getSupabaseAdmin();
+  const [{ data: agentRow }, { data: chamberRow }] = await Promise.all([
+    supabase.from("agents").select("name").eq("id", params.mayorAgentId).maybeSingle(),
+    supabase.from("entity_registry").select("name").eq("id", params.mayorChamberRegistryId).maybeSingle(),
+  ]);
+
+  return {
+    mode: "single",
+    executionMode: params.mayorExecutionMode,
+    answer: params.reason,
+    routing: {
+      targets: [
+        {
+          entityRegistryId: params.mayorChamberRegistryId,
+          confidence: 1,
+          reason: "structure_anaphora_clarify",
+        },
+      ],
+      method: "llm-cheap",
+      agentCount: 0,
+    },
+    targetName: chamberRow?.name ?? null,
+    agentName: agentRow?.name ?? null,
+    agentId: params.mayorAgentId,
+  };
+}
+
 async function executeMayorTask(
   taskText: string,
   mayorAgentId: string,
@@ -1209,9 +1299,12 @@ async function executeMayorTask(
     forceMayorInvokeError?: boolean;
     /** Channel-scoped id, e.g. telegram:<chat_id>. Enables memory + clarify. */
     conversationId?: string;
+    officeId?: string;
   },
 ): Promise<ExecuteChatTaskResult> {
   const supabase = getSupabaseAdmin();
+  const mayorExecutionMode = options?.executionMode ?? "fast";
+  const officeId = options?.officeId ?? (await requireExternalEntryOfficeId());
 
   const { data: buildings } = await supabase
     .from("entity_registry")
@@ -1228,8 +1321,49 @@ async function executeMayorTask(
     Boolean(options?.conversationId) && mayorClarifyAllowed(conversationHistory);
   const modelHistory = mayorConversationTurnsForModel(conversationHistory);
 
-  let decision = await resolveDeterministicMayorRoutingDecision(taskText, buildingRows);
+  const anaphoraResult = await resolveStructureCommandAnaphora(taskText, modelHistory, { officeId });
+
+  if (anaphoraResult.outcome === "ambiguous") {
+    await persistMayorConversationIfNeeded(
+      options?.conversationId,
+      taskText,
+      anaphoraResult.reason,
+      "clarify",
+    );
+    return buildMayorClarificationResult({
+      reason: anaphoraResult.reason,
+      mayorAgentId,
+      mayorChamberRegistryId,
+      mayorExecutionMode,
+    });
+  }
+
+  const resolvedTaskText =
+    anaphoraResult.outcome === "expanded" ? anaphoraResult.expandedText : taskText;
+
+  const officeInventory = await computeOfficeInventoryCounts(officeId);
+  const officeSnapshot = formatMayorOfficeSnapshotPrompt(officeInventory);
+
+  let decision: MayorRoutingDecision | null = null;
   let mayorAnswer: string | null = null;
+
+  if (isOfficeInventoryCountQuestion(resolvedTaskText)) {
+    decision = {
+      action: "answer_self",
+      matchedBy: "semantic",
+      confidence: 1,
+      reasoning: OFFICE_INVENTORY_SNAPSHOT_REASONING,
+      trace: [...OFFICE_INVENTORY_SNAPSHOT_TRACE],
+    };
+    mayorAnswer = formatMayorInventoryAnswer(resolvedTaskText, officeInventory);
+  } else if (isStructureMutationCommand(resolvedTaskText)) {
+    decision = await resolveStructureMutationMayorRoutingDecision(resolvedTaskText);
+  } else if (isSystemReadOnlyQuestion(resolvedTaskText)) {
+    decision = await resolveSystemReadOnlyMayorRoutingDecision(resolvedTaskText);
+  } else {
+    decision = await resolveDeterministicMayorRoutingDecision(resolvedTaskText, buildingRows);
+  }
+
   let governmentFallback = false;
   let mayorAgentName: string | null = null;
   let mayorAgentSlug: string | null = null;
@@ -1250,14 +1384,17 @@ async function executeMayorTask(
     try {
       const invoked = await invokeChamberAgentWithFreeFallback({
         chamberRegistryId: mayorChamberRegistryId,
-        question: taskText,
+        question: resolvedTaskText,
         primaryAgent: {
           agentId: mayorAgentId,
           slug: agentReg.slug,
           registryId: mayorAgentId,
           costTier: "mid",
         },
-        systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows, { clarifyAllowed }),
+        systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows, {
+          clarifyAllowed,
+          officeSnapshot,
+        }),
         forceError: options?.forceMayorInvokeError,
         maxTokens: 4096,
         conversationHistory: modelHistory,
@@ -1315,14 +1452,15 @@ async function executeMayorTask(
     }
   }
 
-  if (decision.matchedBy === "structure_command") {
+  if (decision.matchedBy === "structure_command" || decision.matchedBy === "system_readonly_detector") {
     await supabase.from("routing_logs").insert({
-      task_text: taskText,
+      task_text: resolvedTaskText,
       chosen_target_entity_registry_id: decision.delegatedChamberId ?? decision.target ?? null,
       all_candidates: [],
       method: "rule-based",
       agent_count: 0,
       outcome: "unrated",
+      execution_mode: mayorExecutionMode,
       routing_action: mayorRoutingLogAction(decision),
       routing_matched_by: decision.matchedBy,
       routing_confidence: decision.confidence,
@@ -1334,28 +1472,70 @@ async function executeMayorTask(
   }
 
   if (decision.action === "delegate" && decision.target) {
-    const officeId = await requireExternalEntryOfficeId();
     const techBuildingId = await requireTechDepartmentBuildingId(officeId);
     if (decision.target === techBuildingId) {
       return wrapMayorResultWithConversationMemory(
         options?.conversationId,
         taskText,
-        await executeTechDepartmentTask(taskText, {
+        await executeTechDepartmentTask(resolvedTaskText, {
           turbo: options?.turbo,
           executionMode: options?.executionMode,
           forceFailSlugs: options?.forceFailSlugs,
         }),
       );
     }
+    const delegatedBuildingId = decision.delegatedBuildingId ?? decision.target;
+    const { data: delegateLogRow } = await supabase
+      .from("routing_logs")
+      .insert({
+        task_text: resolvedTaskText,
+        chosen_target_entity_registry_id: decision.delegatedChamberId ?? decision.target,
+        all_candidates: [],
+        method: "llm-cheap",
+        agent_count: 0,
+        outcome: "unrated",
+        execution_mode: mayorExecutionMode,
+        routing_action: mayorRoutingLogAction(decision),
+        routing_matched_by: decision.matchedBy,
+        routing_confidence: decision.confidence,
+        routing_reasoning: decision.reasoning,
+        routing_trace: decision.trace,
+        delegated_building_id: delegatedBuildingId,
+        delegated_chamber_id: decision.delegatedChamberId ?? null,
+      })
+      .select("id")
+      .single();
+
+    const managerResult = await executeManagerTask(resolvedTaskText, decision.target, {
+      turbo: options?.turbo,
+      applySummary: true,
+      executionMode: options?.executionMode,
+      forceFailSlugs: options?.forceFailSlugs,
+      officeId: options?.officeId,
+    });
+
+    if (managerResult.mode === "single") {
+      const invokedCount =
+        managerResult.council?.invokedCount ??
+        managerResult.team?.invokedCount ??
+        managerResult.fast?.invokedCount ??
+        (managerResult.agentId ? 1 : 0);
+      if (delegateLogRow?.id && invokedCount > 0) {
+        await updateRoutingLogAgentCount(delegateLogRow.id, invokedCount, mayorExecutionMode);
+      }
+      if (delegateLogRow?.id) {
+        managerResult.routing = {
+          ...managerResult.routing,
+          routingLogId: delegateLogRow.id,
+          agentCount: invokedCount,
+        };
+      }
+    }
+
     return wrapMayorResultWithConversationMemory(
       options?.conversationId,
       taskText,
-      await executeManagerTask(taskText, decision.target, {
-        turbo: options?.turbo,
-        applySummary: true,
-        executionMode: options?.executionMode,
-        forceFailSlugs: options?.forceFailSlugs,
-      }),
+      managerResult,
     );
   }
 
@@ -1375,12 +1555,13 @@ async function executeMayorTask(
       ]);
 
       await supabase.from("routing_logs").insert({
-        task_text: taskText,
+        task_text: resolvedTaskText,
         chosen_target_entity_registry_id: mayorChamberRegistryId,
         all_candidates: [],
         method: "llm-cheap",
         agent_count: mayorAgentSlug ? 1 : 0,
         outcome: "unrated",
+        execution_mode: mayorExecutionMode,
         routing_action: mayorRoutingLogAction(decision),
         routing_matched_by: decision.matchedBy,
         routing_confidence: decision.confidence,
@@ -1434,12 +1615,13 @@ async function executeMayorTask(
   const { data: logRow } = await supabase
     .from("routing_logs")
     .insert({
-      task_text: taskText,
+      task_text: resolvedTaskText,
       chosen_target_entity_registry_id: mayorChamberRegistryId,
       all_candidates: [],
       method: "llm-cheap",
       agent_count: mayorAgentSlug ? 1 : 0,
       outcome: "unrated",
+      execution_mode: mayorExecutionMode,
       routing_action: mayorRoutingLogAction(decision),
       routing_matched_by: decision.matchedBy,
       routing_confidence: decision.confidence,
@@ -1474,7 +1656,7 @@ async function executeMayorTask(
 
   await archiveChamberAnswer({
     entityRegistryId: mayorChamberRegistryId,
-    taskText,
+    taskText: resolvedTaskText,
     answer,
     agentName: mayorAgentName ?? agentRow?.name ?? agentReg?.name ?? agentReg?.slug ?? null,
     chamberName: chamberRow?.name ?? null,
@@ -1577,10 +1759,40 @@ export async function executeChatTask(
           forceMayorInvokeError:
             process.env.NODE_ENV !== "production" ? options?.forceMayorInvokeError : undefined,
           conversationId: options?.conversationId,
+          officeId,
         }),
       );
     }
     return finish(await executeDirectAgentMode(workingTaskText, options.targetAgentId, chamberId));
+  }
+
+  // RTP-1A: default user intent → Mayor unless explicit direct target or another building Manager.
+  if (!options?.targetAgentId && !options?.directTargetEntityId) {
+    const mayor = await resolveCityHallMainAgent(officeId);
+    if (mayor) {
+      const explicitManagerEntry =
+        sourceEntityId &&
+        sourceEntityId !== mayor.chamberRegistryId &&
+        (await resolveManagerEntry(
+          sourceEntityId,
+          undefined,
+          undefined,
+          resolvedExecutionMode,
+        ));
+      if (!explicitManagerEntry) {
+        return finish(
+          await executeMayorTask(workingTaskText, mayor.agentId, mayor.chamberRegistryId, {
+            turbo: options?.turbo,
+            executionMode: resolvedExecutionMode,
+            forceFailSlugs: options?.forceFailSlugs,
+            forceMayorInvokeError:
+              process.env.NODE_ENV !== "production" ? options?.forceMayorInvokeError : undefined,
+            conversationId: options?.conversationId,
+            officeId,
+          }),
+        );
+      }
+    }
   }
 
   const managerEntry = await resolveManagerEntry(
@@ -1610,11 +1822,12 @@ export async function executeChatTask(
         managerChamberRegistryId: managerEntry.managerChamberId,
         executionMode: resolvedExecutionMode,
         forceFailSlugs: options?.forceFailSlugs,
+        officeId,
       }),
     );
   }
 
-  const result = await processTask(workingTaskText, sourceEntityId);
+  const result = await processTask(workingTaskText, sourceEntityId, { officeId });
 
   if (result.mode === "workflow") {
     const supabase = getSupabaseAdmin();

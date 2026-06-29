@@ -206,7 +206,7 @@ export type RoutingScoreDetail = {
 
 export type RouteDecision = {
   targets: RouteCandidate[];
-  method: 'rule-based' | 'llm-cheap' | 'llm-expensive' | 'fallback' | 'fallback-blocked' | 'tech-structure-plan' | 'tech-code-audit';
+  method: 'rule-based' | 'llm-cheap' | 'llm-expensive' | 'fallback' | 'fallback-blocked' | 'tech-structure-plan' | 'tech-structure-compound-blocked' | 'tech-structure-unsupported' | 'tech-code-audit' | 'direct_agent';
   agentCount: number;
   scoreDetail?: RoutingScoreDetail;
   routingLogId?: string;
@@ -335,9 +335,15 @@ export type MayorRoutingDecision = {
    * - 'explicit_name': user named the building/project directly
    * - 'semantic': Mayor inferred from task context, no explicit name
    * - 'structure_command': deterministic keyword gate (admin/system mutation commands)
+   * - 'system_readonly_detector': read-only city structure/routing audit (MCC-1)
    * - 'structure_command_llm': legacy log value only (removed in MR-2)
    */
-  matchedBy: "explicit_name" | "semantic" | "structure_command" | "structure_command_llm";
+  matchedBy:
+    | "explicit_name"
+    | "semantic"
+    | "structure_command"
+    | "system_readonly_detector"
+    | "structure_command_llm";
   /** Confidence 0-1 */
   confidence: number;
   /** Human-readable explanation (internal, not shown to user) */

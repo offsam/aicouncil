@@ -1,5 +1,6 @@
 import { getSupabaseAdmin, isSupabaseConfigured } from "./supabase/admin";
 import { resolveRoute } from "./routing";
+import { invokeCheapLLM } from "./cheap-llm";
 import type { PlanWorkflowResult, WorkflowPlan, WorkflowPlanStep } from "./office-types";
 import type { RouteDecision } from "./office-types";
 
@@ -37,34 +38,6 @@ async function fetchChamberOptions(): Promise<ChamberOption[]> {
 
   if (error) throw new Error(error.message);
   return (data ?? []) as ChamberOption[];
-}
-
-async function callGroqPlanner(prompt: string): Promise<string> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("GROQ_API_KEY missing");
-
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.1,
-    }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error?.message || `Groq API returned status ${response.status}`);
-  }
-
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Groq returned empty planner response");
-  return content;
 }
 
 export function parseWorkflowPlanResponse(
@@ -117,7 +90,7 @@ export function normalizeWorkflowPlan(plan: WorkflowPlan): WorkflowPlan {
 export async function planWorkflow(
   taskText: string,
   sourceEntityId?: string,
-  options?: { skipChamberList?: boolean },
+  options?: { skipChamberList?: boolean; officeId?: string },
 ): Promise<PlanWorkflowResult> {
   if (!isSupabaseConfigured()) {
     const empty: RouteDecision = {
@@ -128,7 +101,7 @@ export async function planWorkflow(
     return { plan: { needsWorkflow: false, steps: [] }, routeDecision: empty };
   }
 
-  const routeDecision = await resolveRoute(taskText, undefined, sourceEntityId);
+  const routeDecision = await resolveRoute(taskText, undefined, sourceEntityId, options?.officeId);
   const signalA = routeDecision.targets.length > 1;
   const signalB = detectMultiStepHeuristic(taskText);
 
@@ -171,7 +144,12 @@ If the task can be handled by a single department, respond: { "needsWorkflow": f
 If multi-step, provide at least 2 steps in execution order. Use exact UUIDs from the list.`;
 
   try {
-    const raw = await callGroqPlanner(prompt);
+    const raw = await invokeCheapLLM({
+      purpose: "workflow-planner",
+      prompt,
+      responseFormat: "json",
+      officeId: options?.officeId,
+    });
     const parsed = parseWorkflowPlanResponse(raw, validIds);
     if (!parsed) {
       return { plan: { needsWorkflow: false, steps: [] }, routeDecision };

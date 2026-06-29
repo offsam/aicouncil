@@ -1,6 +1,8 @@
 import { getSupabaseAdmin, isSupabaseConfigured } from "./supabase/admin";
 import type { RouteCandidate, RouteDecision, RoutingScoreDetail, MayorRoutingDecision } from "./office-types";
 import { mayorRoutingLogAction } from "./mayor-routing";
+import type { ExecutionMode } from "./execution-mode";
+import { invokeCheapLLM } from "./cheap-llm";
 
 const GENERAL_INTAKE_ID = "c0000000-0000-4000-8000-000000000000";
 const CITY_ID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
@@ -35,65 +37,6 @@ function parseLlmResponse(text: string, validIds: string[]): RouteCandidate[] | 
   } catch {
     return null;
   }
-}
-
-/**
- * Helper to query Groq LLM router.
- */
-async function callGroqRouter(prompt: string): Promise<string> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("GROQ_API_KEY missing");
-
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.1,
-    }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error?.message || `Groq API returned status ${response.status}`);
-  }
-
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Groq returned empty response");
-  return content;
-}
-
-/**
- * Helper to query Gemini LLM router.
- */
-async function callGeminiRouter(prompt: string): Promise<string> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY missing");
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-      }),
-    }
-  );
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error?.message || `Gemini API returned status ${response.status}`);
-  }
-
-  const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!content) throw new Error("Gemini returned empty response");
-  return content;
 }
 
 /**
@@ -242,7 +185,12 @@ function canUseGeneralIntake(
  * resolveRoute - Determines which department/agent should handle the user request.
  * Pure business logic with tiered fallback and RLS logging.
  */
-export async function resolveRoute(taskText: string, attachedFileType?: string, sourceEntityId?: string): Promise<RouteDecision> {
+export async function resolveRoute(
+  taskText: string,
+  attachedFileType?: string,
+  sourceEntityId?: string,
+  officeId?: string,
+): Promise<RouteDecision> {
   const defaultIntakeDecision: RouteDecision = {
     targets: [{ entityRegistryId: GENERAL_INTAKE_ID, confidence: 1.0, reason: "fallback" }],
     method: "rule-based",
@@ -392,13 +340,12 @@ If no specific department matches well, select General Intake ID "${GENERAL_INTA
     // Only attempt LLM routing if there are potential targets to route to
     if (targetsList.length > 0 || !sourceEntityId || allowedTargetIds.includes(GENERAL_INTAKE_ID)) {
       try {
-        if (process.env.GROQ_API_KEY) {
-          llmResponse = await callGroqRouter(prompt);
-        } else if (process.env.GOOGLE_API_KEY) {
-          llmResponse = await callGeminiRouter(prompt);
-        } else {
-          throw new Error("No cheap LLM API keys configured");
-        }
+        llmResponse = await invokeCheapLLM({
+          purpose: "city-router",
+          prompt,
+          responseFormat: "json",
+          officeId,
+        });
       } catch (cheapErr) {
         console.warn("Cheap LLM router failed, escalating to expensive:", (cheapErr as Error).message);
         methodUsed = "llm-expensive";
@@ -478,18 +425,63 @@ If no specific department matches well, select General Intake ID "${GENERAL_INTA
 export async function updateRoutingLogAgentCount(
   routingLogId: string,
   agentCount: number,
+  executionMode?: ExecutionMode,
 ): Promise<void> {
   try {
     const supabase = getSupabaseAdmin();
-    const { error } = await supabase
-      .from("routing_logs")
-      .update({ agent_count: agentCount })
-      .eq("id", routingLogId);
+    const patch: { agent_count: number; execution_mode?: ExecutionMode } = {
+      agent_count: agentCount,
+    };
+    if (executionMode) {
+      patch.execution_mode = executionMode;
+    }
+    const { error } = await supabase.from("routing_logs").update(patch).eq("id", routingLogId);
     if (error) {
       console.error("Failed to update routing_logs.agent_count:", error.message);
     }
   } catch (err) {
     console.error("Failed to update routing_logs.agent_count:", err);
+  }
+}
+
+/**
+ * Log a direct agent chat (bypasses Mayor semantic routing). Best effort.
+ */
+export async function logDirectAgentRoutingDecision(params: {
+  taskText: string;
+  directAgentId: string;
+  directTargetEntityId: string;
+  agentCount?: number;
+}): Promise<string | null> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("routing_logs")
+      .insert({
+        task_text: params.taskText,
+        method: "direct_agent",
+        agent_count: params.agentCount ?? 1,
+        outcome: "unrated",
+        execution_mode: "fast",
+        routing_action: "direct_agent",
+        routing_matched_by: "direct_agent",
+        routing_reasoning: "Direct agent chat — bypasses Mayor semantic routing",
+        routing_trace: ["direct_agent"],
+        direct_agent_id: params.directAgentId,
+        direct_target_entity_id: params.directTargetEntityId,
+        all_candidates: [],
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      console.error("Failed to write direct agent routing_log:", error.message);
+      return null;
+    }
+    return data?.id ?? null;
+  } catch (err) {
+    console.error("Failed to write direct agent routing_log:", err);
+    return null;
   }
 }
 
@@ -502,6 +494,7 @@ async function logRoutingDecision(
   allCandidates: RouteCandidate[],
   method: string,
   agentCount: number,
+  executionMode?: ExecutionMode,
 ): Promise<string | null> {
   try {
     const supabase = getSupabaseAdmin();
@@ -514,6 +507,7 @@ async function logRoutingDecision(
         method,
         agent_count: agentCount,
         outcome: "unrated",
+        ...(executionMode ? { execution_mode: executionMode } : {}),
       })
       .select("id")
       .single();

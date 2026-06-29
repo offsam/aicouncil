@@ -3,11 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExecuteChatTaskResult } from "@/lib/execute-chat-task";
 import { EXECUTION_MODE_OPTIONS, type ExecutionMode } from "@/lib/execution-mode";
-import type { RouteDecision } from "@/lib/office-types";
-import type { RosterAgent } from "@/lib/workspace/execution-progress";
 import { deriveExecutionResultFromChatTask } from "@/lib/workspace/execution-result-status";
 import { formatRoutePath, formatWorkflowSidebar } from "@/lib/workspace/resolve-route-highlight";
-import { ChatExecutionProgress } from "./ChatExecutionProgress";
 import { ChatMessageDetails } from "./ChatMessageDetails";
 import { TechStructureConfirmationGate } from "./TechStructureConfirmationGate";
 import type { TechStructurePlan } from "@/lib/tech-department/structure-types";
@@ -34,6 +31,7 @@ import {
   toStoredChatMessage,
   type StoredChatMessage,
 } from "@/lib/workspace/workspace-chat-history";
+import { getOrCreateWorkspaceMayorConversationId } from "@/lib/workspace/workspace-mayor-conversation-id";
 import type { CostTier } from "@/lib/cost-tier";
 import type { AgentDebateResult, DebateTierMode } from "@/lib/debate/types";
 import type { CityHallDebateChambersByTier } from "@/lib/workspace/resolve-city-hall-council-chamber";
@@ -60,11 +58,16 @@ function buildChatRequestPayload(
   text: string,
   mode: ExecutionMode,
   target: WorkspaceChatTarget,
-  routeSourceEntityId: string | null,
   orchestrator: CityHallOrchestrator | null,
   smartEnabled?: boolean,
   attachmentIds?: string[],
+  mayorConversationId?: string,
 ) {
+  const mayorMemory =
+    target.kind === "mayor" && mayorConversationId
+      ? { conversationId: mayorConversationId }
+      : {};
+
   if (target.kind === "agent") {
     return {
       taskText: text,
@@ -87,25 +90,26 @@ function buildChatRequestPayload(
       attachmentIds,
     };
   }
-  const mayorSource =
-    routeSourceEntityId ?? orchestrator?.chamberRegistryId ?? undefined;
-  if (orchestrator && (mode === "fast" || mode === "council")) {
+  const mayorChamberId = orchestrator?.chamberRegistryId;
+  if (orchestrator && mode === "fast") {
     return {
       taskText: text,
-      executionMode: mode,
+      executionMode: "fast" as ExecutionMode,
       targetAgentId: orchestrator.agentId,
       directTargetEntityId: orchestrator.chamberRegistryId,
-      ...(mayorSource ? { sourceEntityId: mayorSource } : {}),
+      ...(mayorChamberId ? { sourceEntityId: mayorChamberId } : {}),
       turbo: smartEnabled,
       attachmentIds,
+      ...mayorMemory,
     };
   }
   return {
     taskText: text,
     executionMode: mode,
-    ...(mayorSource ? { sourceEntityId: mayorSource } : {}),
+    ...(mayorChamberId ? { sourceEntityId: mayorChamberId } : {}),
     turbo: smartEnabled,
     attachmentIds,
+    ...mayorMemory,
   };
 }
 
@@ -218,7 +222,6 @@ export function WorkspaceMayorChat() {
   const chatFileRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const seenEscalationIdsRef = useRef<Set<string>>(new Set());
-  const [selectedExecAgentId, setSelectedExecAgentId] = useState<string | null>(null);
   const [cityHallOrchestrator, setCityHallOrchestrator] = useState<CityHallOrchestrator | null>(
     null,
   );
@@ -235,26 +238,26 @@ export function WorkspaceMayorChat() {
   const [structureGateOpen, setStructureGateOpen] = useState(false);
   const [pendingStructurePlan, setPendingStructurePlan] = useState<TechStructurePlan | null>(null);
   const [structureExecuting, setStructureExecuting] = useState(false);
-  const {
-    applyChatRoute,
-    startWorkflowReplay,
-    routeSourceEntityId,
-    executionProgress,
-    beginExecutionProgress,
-    markExecutionRouting,
-    markExecutionRunning,
-    tickExecutionActiveAgent,
-    completeExecutionProgress,
-    failExecutionProgress,
-    clearExecutionProgress,
-  } = useWorkspaceRoute();
+  const mayorConversationIdRef = useRef<string | null>(null);
+  const { applyChatRoute, startWorkflowReplay, routeSourceEntityId } = useWorkspaceRoute();
   const { recordLastParticipationExecution } = useWorkspaceSelection();
 
   const rosterEntityId = resolveChatRosterEntityId(target);
   const mayorChamberId =
     target.kind === "mayor" ? cityHallOrchestrator?.chamberRegistryId ?? null : null;
-  const chatSourceEntityId = rosterEntityId ?? routeSourceEntityId ?? mayorChamberId;
+  const chatSourceEntityId =
+    target.kind === "mayor"
+      ? mayorChamberId ?? routeSourceEntityId
+      : rosterEntityId ?? routeSourceEntityId ?? mayorChamberId;
   const agentDirectMode = target.kind === "agent";
+
+  const resolveMayorConversationId = useCallback((): string | undefined => {
+    if (target.kind !== "mayor") return undefined;
+    if (mayorConversationIdRef.current == null) {
+      mayorConversationIdRef.current = getOrCreateWorkspaceMayorConversationId();
+    }
+    return mayorConversationIdRef.current;
+  }, [target.kind]);
 
   const syncInputHeight = useCallback(() => {
     const el = inputRef.current;
@@ -454,42 +457,13 @@ export function WorkspaceMayorChat() {
     EXECUTION_MODE_OPTIONS[0].estimate;
 
   useEffect(() => {
-    if (!executionProgress) return;
-    if (executionProgress.phase !== "complete" && executionProgress.phase !== "error") return;
-    const timer = window.setTimeout(() => clearExecutionProgress(), 350);
-    return () => window.clearTimeout(timer);
-  }, [executionProgress?.phase, clearExecutionProgress]);
-
-  useEffect(() => {
     if (!dockOpen) return;
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, loading, executionProgress, dockOpen]);
-
-  useEffect(() => {
-    if (!executionProgress || executionProgress.phase !== "executing") return;
-    const timer = window.setInterval(() => tickExecutionActiveAgent(), 1400);
-    return () => window.clearInterval(timer);
-  }, [executionProgress?.phase, tickExecutionActiveAgent]);
+  }, [messages, loading, dockOpen]);
 
   function handleToggleExpanded() {
     if (!expanded) setHasUnreadAnswer(false);
     toggleExpanded();
-  }
-
-  async function resolveTargetRoster(
-    targetEntityId: string,
-  ): Promise<{ targetName: string | null; roster: RosterAgent[] }> {
-    const rosterRes = await fetch(
-      `/api/chamber-roster?entityId=${encodeURIComponent(targetEntityId)}&turbo=${smartEnabled}`,
-    );
-    const rosterJson = (await rosterRes.json()) as {
-      chamberName?: string | null;
-      agents?: RosterAgent[];
-    };
-    return {
-      targetName: rosterJson.chamberName ?? null,
-      roster: rosterJson.agents ?? [],
-    };
   }
 
   function notifyAnswerIfCollapsed() {
@@ -499,146 +473,19 @@ export function WorkspaceMayorChat() {
   async function sendTask(text: string, mode: ExecutionMode, filesToUpload: File[] = []) {
     setLoading(true);
     setError(null);
-    setSelectedExecAgentId(null);
-    clearExecutionProgress();
 
     const effectiveMode = agentDirectMode ? "fast" : mode;
 
-    beginExecutionProgress({
-      taskText: text,
-      mode: effectiveMode,
-      roster: [],
-      agentCount: 0,
-    });
-
     try {
-      let decision: RouteDecision | null = null;
-      let targetId = chatSourceEntityId;
-      let targetName: string | null = null;
-      let roster: RosterAgent[] = [];
-
-      if (agentDirectMode && target.kind === "agent") {
-        targetId = target.chamberRegistryId;
-        targetName = target.label;
-        roster = [
-          {
-            id: target.agentId,
-            slug: target.label.toLowerCase().replace(/\s+/g, "-"),
-            name: target.label,
-          },
-        ];
-        beginExecutionProgress({
-          taskText: text,
-          mode: "fast",
-          roster,
-          agentCount: 1,
-        });
-        markExecutionRunning("Fast: ответ агента…");
-      } else if (
-        target.kind === "mayor" &&
-        cityHallOrchestrator &&
-        (effectiveMode === "fast" || effectiveMode === "council")
-      ) {
-        targetId = cityHallOrchestrator.chamberRegistryId;
-        targetName = cityHallOrchestrator.chamberName;
-        roster = [
-          {
-            id: cityHallOrchestrator.agentId,
-            slug: cityHallOrchestrator.agentName.toLowerCase().replace(/\s+/g, "-"),
-            name: cityHallOrchestrator.agentName,
-          },
-        ];
-        beginExecutionProgress({
-          taskText: text,
-          mode: effectiveMode,
-          roster,
-          agentCount: 1,
-        });
-        markExecutionRunning(
-          effectiveMode === "council"
-            ? `Mayor (Council): ${cityHallOrchestrator.agentName}…`
-            : `Mayor: ${cityHallOrchestrator.agentName}…`,
-        );
-        const localDecision: RouteDecision = {
-          targets: [
-            {
-              entityRegistryId: cityHallOrchestrator.chamberRegistryId,
-              confidence: 1,
-              reason: "local_mayor",
-            },
-          ],
-          method: "rule-based",
-          agentCount: 1,
-        };
-        markExecutionRouting(
-          localDecision,
-          cityHallOrchestrator.chamberName,
-          roster,
-          1,
-          {
-            agentId: cityHallOrchestrator.agentId,
-            chamberRegistryId: cityHallOrchestrator.chamberRegistryId,
-          },
-        );
+      let targetId: string | null = null;
+      if (target.kind === "agent" || agentDirectMode) {
+        targetId = target.kind === "agent" ? target.chamberRegistryId : null;
+      } else if (target.kind === "mayor") {
+        targetId = cityHallOrchestrator?.chamberRegistryId ?? mayorChamberId ?? null;
+      } else if (target.kind === "chamber") {
+        targetId = target.registryId;
       } else {
-        const routeRes = await fetch("/api/route", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            question: text,
-            ...(chatSourceEntityId ? { sourceEntityId: chatSourceEntityId } : {}),
-          }),
-        });
-        const routeData = (await routeRes.json()) as {
-          decision?: RouteDecision;
-          error?: string;
-        };
-        if (!routeRes.ok || !routeData.decision) {
-          throw new Error(routeData.error ?? "Ошибка маршрутизации");
-        }
-
-        decision = routeData.decision;
-        if (target.kind === "chamber" && !target.isMainChamber) {
-          decision = {
-            ...decision,
-            targets: [
-              {
-                entityRegistryId: target.registryId,
-                confidence: 1,
-                reason: "direct_chamber",
-              },
-            ],
-            method: "rule-based",
-          };
-        }
-
-        targetId =
-          decision.targets[0]?.entityRegistryId ?? chatSourceEntityId ?? null;
-        const rosterResult = targetId
-          ? await resolveTargetRoster(targetId)
-          : { targetName: null, roster: [] as RosterAgent[] };
-        targetName = rosterResult.targetName;
-        roster = rosterResult.roster;
-
-        markExecutionRouting(
-          decision,
-          targetName,
-          roster,
-          roster.length,
-          target.kind === "mayor" && cityHallOrchestrator
-            ? {
-                agentId: cityHallOrchestrator.agentId,
-                chamberRegistryId: cityHallOrchestrator.chamberRegistryId,
-              }
-            : null,
-        );
-        markExecutionRunning(
-          effectiveMode === "council"
-            ? "Council: сбор мнений и синтез…"
-            : effectiveMode === "team"
-              ? "Team: опрос экспертов…"
-              : "Fast: ответ агента…",
-        );
+        targetId = chatSourceEntityId;
       }
 
       let attachmentIds: string[] = [];
@@ -655,7 +502,6 @@ export function WorkspaceMayorChat() {
         if (!uploadRegistryId) {
           throw new Error("Не удалось определить отдел для загрузки файлов");
         }
-        markExecutionRunning("Загрузка файлов в библиотеку…");
         uploadedAttachments = await uploadChatAttachmentsToLibrary({
           files: filesToUpload,
           registryId: uploadRegistryId,
@@ -667,10 +513,10 @@ export function WorkspaceMayorChat() {
         text,
         effectiveMode,
         target,
-        routeSourceEntityId,
         cityHallOrchestrator,
         smartEnabled,
         attachmentIds.length > 0 ? attachmentIds : undefined,
+        resolveMayorConversationId(),
       );
 
       const res = await fetch("/api/chat", {
@@ -689,11 +535,6 @@ export function WorkspaceMayorChat() {
       const routeSteps = data.mode === "single" ? applyChatRoute(data) : null;
       const routePath = routeSteps?.length ? formatRoutePath(routeSteps) : undefined;
       const meta = buildAssistantMeta(data, routePath);
-      const stepLabel =
-        routePath ??
-        (data.mode === "single" ? data.targetName ?? "Выполнено" : "Workflow завершён");
-
-      completeExecutionProgress(data, stepLabel);
 
       const executionStatus = deriveExecutionResultFromChatTask(data);
       const storeExecutionStatus =
@@ -761,7 +602,6 @@ export function WorkspaceMayorChat() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
-      failExecutionProgress(msg);
       setError(msg);
       setMessages((prev) => [
         ...prev,
@@ -805,14 +645,6 @@ export function WorkspaceMayorChat() {
     setDebateLoading(true);
     setLoading(true);
     setError(null);
-    clearExecutionProgress();
-    beginExecutionProgress({
-      taskText: text,
-      mode: "fast",
-      roster: [],
-      agentCount: 2,
-    });
-    markExecutionRunning("Спор: Совет города…");
 
     try {
       const res = await fetch("/api/debate", {
@@ -832,18 +664,6 @@ export function WorkspaceMayorChat() {
         throw new Error(data.error ?? "Ошибка спора");
       }
 
-      completeExecutionProgress(
-        {
-          mode: "single",
-          executionMode: "fast",
-          answer: data.answer,
-          routing: { targets: [], method: "rule-based", agentCount: 2 },
-          targetName: data.councilChamberName,
-          agentName: `${data.author.name} ↔ ${data.reviewer.name}`,
-          agentId: data.author.agentId,
-        },
-        "Спор завершён",
-      );
       const meta = `Спор · ${data.author.name} ↔ ${data.reviewer.name} · ${data.councilChamberName}`;
       setMessages((prev) => [
         ...prev,
@@ -863,7 +683,6 @@ export function WorkspaceMayorChat() {
       notifyAnswerIfCollapsed();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
-      failExecutionProgress(msg);
       setError(msg);
       setMessages((prev) => [
         ...prev,
@@ -947,6 +766,8 @@ export function WorkspaceMayorChat() {
       notifyAnswerIfCollapsed();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
+      setStructureGateOpen(false);
+      setPendingStructurePlan(null);
       setError(msg);
       setMessages((prev) => [
         ...prev,
@@ -996,8 +817,12 @@ export function WorkspaceMayorChat() {
         open={structureGateOpen}
         planSummary={pendingStructurePlan?.summary ?? ""}
         actionLines={
-          pendingStructurePlan?.actions.map((a, i) => `${i + 1}. ${a.description}`) ?? []
+          pendingStructurePlan?.actions.map((a, i) => `${i + 1}. [${a.type}] ${a.description}`) ??
+          []
         }
+        impactLines={pendingStructurePlan?.impactAnalysis?.summaryLines}
+        snapshotId={pendingStructurePlan?.snapshotId}
+        isDestructive={pendingStructurePlan?.planKind === "destructive"}
         confirmDisabled={structureExecuting}
         onCancel={handleStructureCancel}
         onConfirm={() => void handleStructureConfirm()}
@@ -1140,17 +965,6 @@ export function WorkspaceMayorChat() {
               <span className="workspace-chat-dock__estimate" data-testid="workspace-execution-estimate">
                 {estimate}
               </span>
-            </div>
-          )}
-
-          {executionProgress &&
-            (executionProgress.phase === "routing" || executionProgress.phase === "executing") && (
-            <div className="workspace-chat-dock__progress">
-              <ChatExecutionProgress
-                progress={executionProgress}
-                selectedAgentId={selectedExecAgentId}
-                onSelectAgent={setSelectedExecAgentId}
-              />
             </div>
           )}
 

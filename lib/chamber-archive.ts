@@ -1,4 +1,6 @@
 import { getSupabaseAdmin, isSupabaseConfigured } from "./supabase/admin";
+import { invokeCheapLLM } from "./cheap-llm";
+import { resolveOfficeIdForEntityRegistry } from "./system-llm-roles";
 
 /** Keep active raw rows in the fresh layer while their cumulative size from newest stays within this budget. */
 export const ARCHIVE_SUMMARIZE_FRESH_RAW_CHARS = 35000;
@@ -33,51 +35,6 @@ function formatArchiveContent(params: {
     `Задача: ${params.taskText.trim()}`,
     `Итог: ${params.answer.trim()}`,
   ].join("\n");
-}
-
-async function callCheapLLM(prompt: string): Promise<string> {
-  if (process.env.GROQ_API_KEY) {
-    const apiKey = process.env.GROQ_API_KEY;
-    try {
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.2,
-        }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        return data.choices?.[0]?.message?.content || "";
-      }
-      console.warn("[chamber-archive] Groq summarization failed, falling back:", data);
-    } catch (err) {
-      console.warn("[chamber-archive] Groq summarization threw, falling back:", err);
-    }
-  }
-
-  if (process.env.GOOGLE_API_KEY) {
-    const apiKey = process.env.GOOGLE_API_KEY;
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      },
-    );
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  }
-
-  throw new Error("No cheap LLM key configured for archive summarization");
 }
 
 function parseTimestamp(value: string | null): number {
@@ -131,6 +88,7 @@ function buildHeuristicSummary(params: {
 async function buildSummaryContent(params: {
   previousSummary: ArchiveRow | null;
   foldableRows: ArchiveRow[];
+  officeId?: string;
 }): Promise<string> {
   const sections: string[] = [];
 
@@ -159,7 +117,13 @@ async function buildSummaryContent(params: {
   ].join("\n");
 
   try {
-    const summary = await callCheapLLM(prompt);
+    const summary = await invokeCheapLLM({
+      purpose: "chamber-archive-summary",
+      prompt,
+      responseFormat: "text",
+      temperature: 0.2,
+      officeId: params.officeId,
+    });
     if (summary.trim()) return normalizeWhitespace(summary);
   } catch (err) {
     console.warn("[chamber-archive] cheap LLM summary failed, using heuristic fallback:", err);
@@ -225,9 +189,11 @@ async function summarizeChamberArchive(entityRegistryId: string): Promise<void> 
 
   if (!shouldSummarizeByVolume && !shouldSummarizeByInactivity) return;
 
+  const officeId = (await resolveOfficeIdForEntityRegistry(entityRegistryId)) ?? undefined;
   const summaryContent = await buildSummaryContent({
     previousSummary: latestSummary ?? null,
     foldableRows,
+    officeId,
   });
 
   if (!summaryContent) return;

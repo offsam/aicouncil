@@ -1,4 +1,3 @@
-import { seedDefaultChamberRoster } from "../chamber-default-roster";
 import { ensureBuildingRegistry, resolveUniqueChamberSlug, validateConnectionEntities } from "../entity-registry-ensure";
 import { getSupabaseAdmin } from "../supabase/admin";
 import { requireExternalEntryOfficeId } from "../workspace/graph-identity-required";
@@ -6,26 +5,95 @@ import { NEW_CONNECTION_PERMISSIONS } from "../workspace/workspace-connections";
 import type {
   StructureAction,
   StructureExecutionResult,
+  StructureImpactAnalysis,
+  StructurePlanKind,
   TechStructurePlan,
+} from "./structure-types";
+import {
+  isDestructiveStructureAction,
+  planHasDestructiveActions,
 } from "./structure-types";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function resolveRef(ref: string, refMap: Map<string, string>): string {
+type StructurePlanRow = {
+  id: string;
+  task_text: string;
+  plan_summary: string;
+  actions: unknown;
+  status: string;
+  expires_at: string | null;
+  plan_kind: string | null;
+  impact_analysis: unknown;
+  snapshot_id: string | null;
+  execution_result: StructureExecutionResultPayload | null;
+};
+
+type StructureExecutionResultPayload = {
+  executed?: StructureExecutionResult["executed"];
+  error?: string;
+  failedStep?: number;
+  failedType?: string;
+  planKind?: StructurePlanKind;
+  snapshotId?: string;
+};
+
+/** Strip leading $ from planner refs ($building1 → building1). */
+export function normalizePlanRefKey(ref: string): string {
+  const trimmed = ref.trim();
+  return trimmed.startsWith("$") ? trimmed.slice(1) : trimmed;
+}
+
+/** Register all common alias forms for a planner ref. */
+export function registerPlanRef(refMap: Map<string, string>, alias: string, id: string): void {
+  const trimmed = alias.trim();
+  if (!trimmed) return;
+  const bare = normalizePlanRefKey(trimmed);
+  refMap.set(trimmed, id);
+  refMap.set(bare, id);
+  refMap.set(`$${bare}`, id);
+  refMap.set(id, id);
+}
+
+export function resolveRef(ref: string, refMap: Map<string, string>): string {
   const trimmed = ref.trim();
   if (UUID_RE.test(trimmed)) return trimmed;
-  const mapped = refMap.get(trimmed);
-  if (!mapped) {
-    throw new Error(`Unresolved reference: ${trimmed}`);
+
+  const bare = normalizePlanRefKey(trimmed);
+  for (const key of [trimmed, bare, `$${bare}`]) {
+    const mapped = refMap.get(key);
+    if (mapped) return mapped;
   }
-  return mapped;
+
+  throw new Error(`Unresolved reference: ${trimmed}`);
+}
+
+function registerBuildingRefs(
+  refMap: Map<string, string>,
+  id: string,
+  ordinal: number,
+  explicitRef?: string,
+): void {
+  if (explicitRef) registerPlanRef(refMap, explicitRef, id);
+  registerPlanRef(refMap, `building${ordinal}`, id);
+}
+
+function registerChamberRefs(
+  refMap: Map<string, string>,
+  registryId: string,
+  ordinal: number,
+  explicitRef?: string,
+): void {
+  if (explicitRef) registerPlanRef(refMap, explicitRef, registryId);
+  registerPlanRef(refMap, `chamber${ordinal}`, registryId);
 }
 
 async function executeCreateBuilding(
   action: Extract<StructureAction, { type: "create_building" }>,
   refMap: Map<string, string>,
   officeId: string,
+  ordinal: number,
 ): Promise<string> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -58,14 +126,14 @@ async function executeCreateBuilding(
     undefined,
   );
 
-  if (action.ref) refMap.set(action.ref, data.id);
-  refMap.set(data.id, data.id);
+  registerBuildingRefs(refMap, data.id, ordinal, action.ref);
   return data.id;
 }
 
 async function executeCreateChamber(
   action: Extract<StructureAction, { type: "create_chamber" }>,
   refMap: Map<string, string>,
+  ordinal: number,
 ): Promise<string> {
   const supabase = getSupabaseAdmin();
   const buildingId = resolveRef(action.building_ref, refMap);
@@ -108,13 +176,7 @@ async function executeCreateChamber(
     throw new Error(chamError?.message ?? "Failed to create chamber row");
   }
 
-  await seedDefaultChamberRoster(supabase, {
-    chamberId: chamber.id,
-    chamberRegistryId: registry.id,
-  });
-
-  if (action.ref) refMap.set(action.ref, registry.id);
-  refMap.set(registry.id, registry.id);
+  registerChamberRefs(refMap, registry.id, ordinal, action.ref);
   return registry.id;
 }
 
@@ -213,65 +275,221 @@ async function executeCreateConnection(
   return conn.id;
 }
 
-/** Ordered execution: building → chamber → assign → connection. */
-function sortActionsForExecution(actions: StructureAction[]): StructureAction[] {
-  const order: Record<string, number> = {
-    create_building: 0,
-    create_chamber: 1,
-    assign_agent: 2,
-    create_connection: 3,
-  };
-  return [...actions].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
+/** Execute in planner order — refs resolve from prior steps in the same plan. */
+function orderActionsForExecution(actions: StructureAction[]): StructureAction[] {
+  return [...actions];
 }
 
-export async function loadPendingStructurePlan(planId: string): Promise<TechStructurePlan | null> {
+export function formatFailedStructurePlanMessage(payload: StructureExecutionResultPayload): string {
+  const failedStep =
+    payload.failedStep ??
+    (payload.executed?.find((step) => !step.ok)?.actionIndex ?? 0) + 1;
+  const failedType =
+    payload.failedType ??
+    payload.executed?.find((step) => !step.ok)?.type ??
+    "unknown";
+  const error = payload.error ?? "неизвестная ошибка";
+  return `План прерван ошибкой на шаге ${failedStep} (${failedType}): ${error}. Повторное выполнение невозможно, создайте план заново.`;
+}
+
+async function loadStructurePlanRow(planId: string): Promise<StructurePlanRow | null> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("tech_structure_plans")
-    .select("id, task_text, plan_summary, actions, status, expires_at")
+    .select(
+      "id, task_text, plan_summary, actions, status, expires_at, plan_kind, impact_analysis, snapshot_id, execution_result",
+    )
     .eq("id", planId)
     .maybeSingle();
 
   if (error || !data) return null;
-  if (data.status !== "pending") return null;
-  if (data.expires_at && new Date(data.expires_at).getTime() < Date.now()) {
-    await supabase
-      .from("tech_structure_plans")
-      .update({ status: "expired" })
-      .eq("id", planId);
-    return null;
-  }
+  return data as StructurePlanRow;
+}
 
+function rowToTechStructurePlan(row: StructurePlanRow): TechStructurePlan {
   return {
-    planId: data.id,
-    taskText: data.task_text,
-    summary: data.plan_summary,
-    actions: (data.actions ?? []) as StructureAction[],
-    expiresAt: data.expires_at,
+    planId: row.id,
+    taskText: row.task_text,
+    summary: row.plan_summary,
+    actions: (row.actions ?? []) as StructureAction[],
+    expiresAt: row.expires_at ?? new Date().toISOString(),
+    planKind: (row.plan_kind ?? "create") as StructurePlanKind,
+    impactAnalysis: (row.impact_analysis ?? undefined) as StructureImpactAnalysis | undefined,
+    snapshotId: row.snapshot_id ?? undefined,
   };
 }
 
+export async function loadPendingStructurePlan(planId: string): Promise<TechStructurePlan | null> {
+  const row = await loadStructurePlanRow(planId);
+  if (!row || row.status !== "pending") return null;
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+    const supabase = getSupabaseAdmin();
+    await supabase.from("tech_structure_plans").update({ status: "expired" }).eq("id", planId);
+    return null;
+  }
+  return rowToTechStructurePlan(row);
+}
+
+function resolvePlanExecutionBlock(row: StructurePlanRow): string | null {
+  if (row.status === "failed") {
+    return formatFailedStructurePlanMessage(row.execution_result ?? {});
+  }
+  if (row.status === "executed") {
+    return "План уже выполнен. Создайте новый план для дальнейших изменений.";
+  }
+  if (row.status === "cancelled") {
+    if (row.execution_result?.error) {
+      return formatFailedStructurePlanMessage(row.execution_result);
+    }
+    return "План отменён. Создайте новый план для выполнения изменений.";
+  }
+  if (row.status === "expired") {
+    return "Срок действия плана истёк. Создайте новый план.";
+  }
+  if (row.status === "pending") {
+    if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+      return "Срок действия плана истёк. Создайте новый план.";
+    }
+    return null;
+  }
+  return "Plan not found, expired, or already executed";
+}
+
+function assertDestructiveActionsOnly(actions: StructureAction[]): void {
+  if (actions.length === 0) {
+    throw new Error("Destructive plan has no actions");
+  }
+  for (let i = 0; i < actions.length; i++) {
+    const action = actions[i];
+    if (!isDestructiveStructureAction(action)) {
+      throw new Error(`Unsupported action type for destructive execute at step ${i + 1}: ${action.type}`);
+    }
+  }
+}
+
+function destructiveActionsForRpc(actions: StructureAction[]): Record<string, unknown>[] {
+  return actions.map((action) => {
+    switch (action.type) {
+      case "delete_building":
+        return { type: action.type, building_id: action.building_id };
+      case "delete_chamber":
+        return { type: action.type, chamber_registry_id: action.chamber_registry_id };
+      case "delete_connection":
+        return { type: action.type, connection_id: action.connection_id };
+      case "unassign_agent":
+        return {
+          type: action.type,
+          agent_id: action.agent_id,
+          chamber_ref: action.chamber_ref,
+        };
+      default:
+        throw new Error(`Unsupported destructive action type: ${(action as StructureAction).type}`);
+    }
+  });
+}
+
+async function executeDestructiveStructurePlan(
+  planId: string,
+  plan: TechStructurePlan,
+): Promise<StructureExecutionResult> {
+  if (plan.planKind !== "destructive") {
+    throw new Error("Plan is not marked as destructive");
+  }
+
+  assertDestructiveActionsOnly(plan.actions);
+
+  const supabase = getSupabaseAdmin();
+  const rpcActions = destructiveActionsForRpc(plan.actions);
+
+  try {
+    const { data, error } = await supabase.rpc("execute_destructive_structure_plan", {
+      actions: rpcActions,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const payload = (data ?? {}) as { executed?: StructureExecutionResult["executed"] };
+    const executed = payload.executed ?? [];
+
+    await supabase
+      .from("tech_structure_plans")
+      .update({
+        status: "executed",
+        executed_at: new Date().toISOString(),
+        execution_result: {
+          planKind: "destructive",
+          snapshotId: plan.snapshotId,
+          executed,
+        },
+      })
+      .eq("id", planId);
+
+    return { planId, executed };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await supabase
+      .from("tech_structure_plans")
+      .update({
+        status: "failed",
+        execution_result: {
+          error: message,
+          planKind: "destructive",
+          snapshotId: plan.snapshotId,
+        },
+      })
+      .eq("id", planId);
+    throw new Error(message);
+  }
+}
+
 export async function executeTechStructurePlan(planId: string): Promise<StructureExecutionResult> {
-  const plan = await loadPendingStructurePlan(planId);
-  if (!plan) {
+  const row = await loadStructurePlanRow(planId);
+  if (!row) {
     throw new Error("Plan not found, expired, or already executed");
+  }
+
+  const blockMessage = resolvePlanExecutionBlock(row);
+  if (blockMessage) {
+    if (row.status === "pending" && row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+      const supabase = getSupabaseAdmin();
+      await supabase.from("tech_structure_plans").update({ status: "expired" }).eq("id", planId);
+    }
+    throw new Error(blockMessage);
+  }
+
+  const plan = rowToTechStructurePlan(row);
+
+  if (plan.planKind === "destructive") {
+    return executeDestructiveStructurePlan(planId, plan);
+  }
+
+  if (planHasDestructiveActions(plan.actions)) {
+    throw new Error(
+      "Plan contains destructive actions but plan_kind is not destructive. Create a new plan.",
+    );
   }
 
   const supabase = getSupabaseAdmin();
   const officeId = await requireExternalEntryOfficeId();
   const refMap = new Map<string, string>();
   const executed: StructureExecutionResult["executed"] = [];
-  const sorted = sortActionsForExecution(plan.actions);
+  const ordered = orderActionsForExecution(plan.actions);
+  let buildingOrdinal = 0;
+  let chamberOrdinal = 0;
 
-  for (let i = 0; i < sorted.length; i++) {
-    const action = sorted[i];
+  for (let i = 0; i < ordered.length; i++) {
+    const action = ordered[i];
     try {
       let detail = "ok";
       if (action.type === "create_building") {
-        const id = await executeCreateBuilding(action, refMap, officeId);
+        buildingOrdinal += 1;
+        const id = await executeCreateBuilding(action, refMap, officeId, buildingOrdinal);
         detail = `building id=${id}`;
       } else if (action.type === "create_chamber") {
-        const id = await executeCreateChamber(action, refMap);
+        chamberOrdinal += 1;
+        const id = await executeCreateChamber(action, refMap, chamberOrdinal);
         detail = `chamber registry id=${id}`;
       } else if (action.type === "assign_agent") {
         await executeAssignAgent(action, refMap);
@@ -279,19 +497,27 @@ export async function executeTechStructurePlan(planId: string): Promise<Structur
       } else if (action.type === "create_connection") {
         const id = await executeCreateConnection(action, refMap);
         detail = `connection id=${id}`;
+      } else {
+        throw new Error(`Unsupported action type for create execute: ${action.type}`);
       }
       executed.push({ actionIndex: i, type: action.type, ok: true, detail });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const failedStep = i + 1;
       executed.push({ actionIndex: i, type: action.type, ok: false, detail: message });
       await supabase
         .from("tech_structure_plans")
         .update({
-          status: "cancelled",
-          execution_result: { executed, error: message },
+          status: "failed",
+          execution_result: {
+            executed,
+            error: message,
+            failedStep,
+            failedType: action.type,
+          },
         })
         .eq("id", planId);
-      throw new Error(`Step ${i + 1} (${action.type}) failed: ${message}`);
+      throw new Error(formatFailedStructurePlanMessage({ executed, error: message, failedStep, failedType: action.type }));
     }
   }
 

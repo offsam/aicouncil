@@ -44,23 +44,38 @@ function isRetryableGroqFailure(status: number, message: string): boolean {
   );
 }
 
+export type GroqCallOpts = {
+  maxTokens?: number;
+  temperature?: number;
+  responseFormat?: "json" | "text";
+};
+
 async function callGroqOnce(
   apiKey: string,
   model: string,
   messages: GroqMessage[],
-  maxTokens: number,
+  opts: GroqCallOpts = {},
 ): Promise<{ ok: boolean; status: number; answer?: string; error?: string }> {
+  const maxTokens = opts.maxTokens ?? 2048;
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: maxTokens,
+    messages,
+  };
+  if (opts.temperature !== undefined) {
+    body.temperature = opts.temperature;
+  }
+  if (opts.responseFormat === "json") {
+    body.response_format = { type: "json_object" };
+  }
+
   const response = await fetch(GROQ_CHAT_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages,
-    }),
+    body: JSON.stringify(body),
   });
 
   const data = (await response.json()) as {
@@ -94,19 +109,18 @@ async function callGroqOnce(
 export async function callGroqWithFallback(
   primaryModel: string,
   messages: GroqMessage[],
-  opts?: { maxTokens?: number },
+  opts?: GroqCallOpts,
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY missing");
 
-  const maxTokens = opts?.maxTokens ?? 2048;
   try {
     const result = await callWithModelFallback({
       providerTag: "groq",
       primaryModel,
       fallbackPool: GROQ_FALLBACK_POOL,
       isRetryable: isRetryableGroqFailure,
-      callOnce: (model) => callGroqOnce(apiKey, model, messages, maxTokens),
+      callOnce: (model) => callGroqOnce(apiKey, model, messages, opts),
     });
     recordProviderSuccess("groq", primaryModel, result.modelUsed);
     return result;
@@ -134,8 +148,7 @@ export async function callGroqConfiguredModel(
     throw new Error("GROQ_API_KEY missing");
   }
 
-  const maxTokens = opts?.maxTokens ?? 2048;
-  const result = await callGroqOnce(apiKey, model, messages, maxTokens);
+  const result = await callGroqOnce(apiKey, model, messages, opts);
   if (!result.ok) {
     recordProviderFailure("groq", model, result.error ?? "Groq failed");
     throw new Error(result.error ?? `Groq error ${result.status}`);

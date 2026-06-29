@@ -1,5 +1,6 @@
 import type { ManagerRoutingDecision } from "./office-types";
 import { MANAGER_ROUTING_PROMPT_PREFIX } from "./agent-persona";
+import { invokeCheapLLM } from "./cheap-llm";
 
 export type ManagerRoutingChamber = {
   id: string;
@@ -22,6 +23,7 @@ export async function resolveManagerRoutingDecision(
   buildingRegistryId: string,
   managerChamberRegistryId: string,
   internalChambers: ManagerRoutingChamber[],
+  options?: { officeId?: string },
 ): Promise<ManagerRoutingDecision> {
   const base = {
     buildingId: buildingRegistryId,
@@ -62,45 +64,12 @@ User request: "${taskText}"
 
 Respond with JSON only.`;
 
-  let responseText = "";
-  if (process.env.GROQ_API_KEY) {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        response_format: { type: "json_object" },
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.1,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error?.message || `Groq API returned status ${response.status}`);
-    }
-    responseText = data.choices?.[0]?.message?.content || "";
-  } else if (process.env.GOOGLE_API_KEY) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      },
-    );
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error?.message || `Gemini API returned status ${response.status}`);
-    }
-    responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  } else {
-    throw new Error("No cheap LLM API key configured for manager routing decision");
-  }
+  const responseText = await invokeCheapLLM({
+    purpose: "manager-routing",
+    prompt,
+    responseFormat: "json",
+    officeId: options?.officeId,
+  });
 
   const validIds = new Set(internalChambers.map((c) => c.id));
 

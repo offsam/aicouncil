@@ -4,15 +4,19 @@ import {
   hasCodeAuditConflictSignal,
   hasCodeAuditKeywords,
   hasDiagnoseConflictSignal,
+  hasExplicitStructureMutationIntent,
   hasRuntimeDiagnoseKeywords,
-  hasStructureMutationKeywords,
+  isComplaintOrCorrectionRequest,
   PRIMARY_STRUCTURE_VERBS,
 } from "../structure-command-intent";
 
 export type TechDepartmentIntent = "diagnose" | "structure" | "code_audit" | "unknown";
 
 function hasStrongStructureSignal(text: string): boolean {
-  if (!hasStructureMutationKeywords(text)) return false;
+  if (isComplaintOrCorrectionRequest(text) && !hasExplicitStructureMutationIntent(text)) {
+    return false;
+  }
+  if (!hasExplicitStructureMutationIntent(text)) return false;
   if (
     hasRuntimeDiagnoseKeywords(text) &&
     !containsAnyKeyword(text, PRIMARY_STRUCTURE_VERBS)
