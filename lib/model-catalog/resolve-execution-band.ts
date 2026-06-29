@@ -1,4 +1,5 @@
 import type { CostTier } from "@/lib/cost-tier";
+import { TIER_DEFAULT_PATTERNS } from "./default-chamber-roster-picks";
 import {
   inferCatalogCostTier,
   inferCatalogCostTierWithSource,
@@ -10,7 +11,7 @@ export type { CatalogBandSource };
 
 export type PatternTierMatch = {
   tier: CostTier;
-  /** Index within TIER_DEFAULT_PATTERNS[tier] (mirrored from default-chamber-roster-picks.ts). */
+  /** Index within TIER_DEFAULT_PATTERNS[tier] (from default-chamber-roster-picks.ts). */
   patternIndex: number;
 };
 
@@ -28,48 +29,11 @@ export type ResolveExecutionBandResult = {
   gateway: ModelGateway;
   catalogBand: CostTier;
   patternHaystack: string;
-  /** All tiers whose mirrored TIER_DEFAULT_PATTERNS matched (0, 1, or many). */
+  /** All tiers whose TIER_DEFAULT_PATTERNS matched (0, 1, or many). */
   patternMatches: PatternTierMatch[];
   /** True when catalog band disagrees with pattern tier(s) or patterns are ambiguous. */
   patternDiscrepancy: boolean;
   patternDiscrepancyDetail: string;
-};
-
-/**
- * Mirrored from default-chamber-roster-picks.ts `TIER_DEFAULT_PATTERNS` for discrepancy
- * comparison only. Do not edit independently — keep in sync with that file.
- */
-export const COMPARISON_TIER_DEFAULT_PATTERNS: Record<CostTier, RegExp[]> = {
-  free: [
-    /\bgroq\/compound-mini\b|\bcompound-mini\b/i,
-    /\bllama-3\.3-70b-versatile\b|\bllama-3\.1-8b\b/i,
-    /\bgemma.*:free\b|\bgemma-4.*\bfree\b/i,
-    /\bnorth-mini\b|\bcohere.*free\b/i,
-    /\bgemini.*flash.*free\b/i,
-  ],
-  cheap: [
-    /\bclaude-haiku-4(?:\.\d+|-5)\b|\bclaude-3-haiku\b/i,
-    /\bgpt-4o-mini\b/i,
-    /\bgemini-(?:2\.5|3(?:\.\d+)?)-flash\b/i,
-    /\bqwen3-coder-30b\b|\bqwen.*coder.*instruct\b/i,
-    /\bdeepseek-chat\b|\bdeepseek-v3\b/i,
-    /\bmistral-small\b|\bllama-3\.3\b/i,
-  ],
-  mid: [
-    /\bclaude-sonnet-4(?:\.\d+|-6)\b|\bclaude-sonnet-4-6\b/i,
-    /\bgpt-4o\b(?!-mini)/i,
-    /\bgemini-(?:2\.5|3(?:\.\d+)?)-flash\b/i,
-    /\bqwen3-coder\b|\bqwen.*coder\b/i,
-    /\bmistral-medium\b|\bgrok-4\b/i,
-    /\bdeepseek-chat\b|\bdeepseek-v3\b/i,
-  ],
-  premium: [
-    /\bclaude-opus-4(?:\.\d+|-\d)\b/i,
-    /\bgpt-5(?:\.\d+)?(?:-chat|-pro|-\d{4})?\b/i,
-    /\bgemini-(?:2\.5|3(?:\.\d+)?)-pro\b/i,
-    /\bo3(?:-mini|-pro)?\b|\bo4-mini\b/i,
-    /\bqwen3-coder-480\b|\bqwen.*coder\b/i,
-  ],
 };
 
 const TIER_ORDER: CostTier[] = ["free", "cheap", "mid", "premium"];
@@ -106,7 +70,7 @@ export function buildPatternHaystack(
 export function findPatternTierMatches(haystack: string): PatternTierMatch[] {
   const matches: PatternTierMatch[] = [];
   for (const tier of TIER_ORDER) {
-    const patterns = COMPARISON_TIER_DEFAULT_PATTERNS[tier];
+    const patterns = TIER_DEFAULT_PATTERNS[tier];
     for (let i = 0; i < patterns.length; i += 1) {
       if (patterns[i].test(haystack)) {
         matches.push({ tier, patternIndex: i });
@@ -156,8 +120,8 @@ export function assessPatternDiscrepancy(
 
 /**
  * Classify execution band (free/cheap/mid/premium) for a provider/model pair.
- * Primary band: inferCatalogCostTier. Pattern tiers: mirrored TIER_DEFAULT_PATTERNS
- * for discrepancy reporting only — band is NOT overridden on mismatch.
+ * Primary band: inferCatalogCostTier. Pattern tiers: TIER_DEFAULT_PATTERNS from
+ * default-chamber-roster-picks.ts for discrepancy reporting only — band is NOT overridden.
  */
 export function resolveExecutionBand(
   provider: string,

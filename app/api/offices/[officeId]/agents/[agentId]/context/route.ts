@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildContext } from "@/lib/entity-registry";
+import { requireInternalSecret } from "@/lib/security/require-internal-secret";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 
 type RouteParams = { params: Promise<{ officeId: string; agentId: string }> };
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
+  const secretDenied = requireInternalSecret(request);
+  if (secretDenied) return secretDenied;
+
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ error: "Supabase не настроен" }, { status: 503 });
   }

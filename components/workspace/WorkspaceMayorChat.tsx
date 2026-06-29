@@ -9,7 +9,6 @@ import { deriveExecutionResultFromChatTask } from "@/lib/workspace/execution-res
 import { formatRoutePath, formatWorkflowSidebar } from "@/lib/workspace/resolve-route-highlight";
 import { ChatExecutionProgress } from "./ChatExecutionProgress";
 import { ChatMessageDetails } from "./ChatMessageDetails";
-import { CouncilConfirmationGate } from "./CouncilConfirmationGate";
 import { TechStructureConfirmationGate } from "./TechStructureConfirmationGate";
 import type { TechStructurePlan } from "@/lib/tech-department/structure-types";
 import type { ChatAttachment } from "@/lib/chat/chat-attachment-types";
@@ -48,7 +47,6 @@ type CityHallOrchestrator = {
 
 type ChatMessage = StoredChatMessage;
 
-const DEFAULT_CHAMBER_NAME = "Instagram";
 const CHAT_INPUT_MIN_PX = 40;
 const CHAT_INPUT_MAX_PX = 160;
 
@@ -91,10 +89,10 @@ function buildChatRequestPayload(
   }
   const mayorSource =
     routeSourceEntityId ?? orchestrator?.chamberRegistryId ?? undefined;
-  if (orchestrator && mode === "fast") {
+  if (orchestrator && (mode === "fast" || mode === "council")) {
     return {
       taskText: text,
-      executionMode: "fast" as ExecutionMode,
+      executionMode: mode,
       targetAgentId: orchestrator.agentId,
       directTargetEntityId: orchestrator.chamberRegistryId,
       ...(mayorSource ? { sourceEntityId: mayorSource } : {}),
@@ -213,12 +211,6 @@ export function WorkspaceMayorChat() {
   } | null>(null);
   const [teamRosterEligible, setTeamRosterEligible] = useState(true);
   const [councilRosterEligible, setCouncilRosterEligible] = useState(true);
-  const [chamberName, setChamberName] = useState(DEFAULT_CHAMBER_NAME);
-  const [councilGateOpen, setCouncilGateOpen] = useState(false);
-  const [pendingCouncilText, setPendingCouncilText] = useState("");
-  const [councilTargetEligible, setCouncilTargetEligible] = useState(true);
-  const [teamTargetEligible, setTeamTargetEligible] = useState(true);
-  const [pendingGateMode, setPendingGateMode] = useState<"team" | "council">("council");
   const listRef = useRef<HTMLDivElement>(null);
   const prevDockOpenRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -419,7 +411,6 @@ export function WorkspaceMayorChat() {
     if (!chatSourceEntityId) {
       setTeamRosterEligible(true);
       setCouncilRosterEligible(true);
-      setChamberName(DEFAULT_CHAMBER_NAME);
       return;
     }
 
@@ -443,7 +434,6 @@ export function WorkspaceMayorChat() {
             mid: data.tierCounts?.mid ?? 0,
             premium: data.tierCounts?.premium ?? 0,
           });
-          if (data.chamberName) setChamberName(data.chamberName);
         },
       )
       .catch(() => {
@@ -502,74 +492,6 @@ export function WorkspaceMayorChat() {
     };
   }
 
-  async function openCouncilGate(text: string, mode: "team" | "council") {
-    setPendingCouncilText(text);
-    setPendingGateMode(mode);
-    setCouncilGateOpen(true);
-    setCouncilTargetEligible(true);
-    setTeamTargetEligible(true);
-
-    try {
-      const res = await fetch("/api/route", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: text,
-          ...(chatSourceEntityId ? { sourceEntityId: chatSourceEntityId } : {}),
-        }),
-      });
-      const data = (await res.json()) as {
-        decision?: { targets?: Array<{ entityRegistryId?: string }> };
-      };
-      const targetId = data.decision?.targets?.[0]?.entityRegistryId;
-      if (!targetId) return;
-
-      let rosterEntityId = targetId;
-      if (routeSourceEntityId) {
-        const [targetRosterRes, sourceRosterRes] = await Promise.all([
-          fetch(`/api/chamber-roster?entityId=${encodeURIComponent(targetId)}&turbo=${smartEnabled}`),
-          fetch(
-            `/api/chamber-roster?entityId=${encodeURIComponent(routeSourceEntityId)}&turbo=${smartEnabled}`,
-          ),
-        ]);
-        const targetRoster = (await targetRosterRes.json()) as {
-          councilEligible?: boolean;
-        };
-        const sourceRoster = (await sourceRosterRes.json()) as {
-          chamberName?: string | null;
-          councilEligible?: boolean;
-        };
-        if (!targetRoster.councilEligible && sourceRoster.councilEligible) {
-          rosterEntityId = routeSourceEntityId;
-        }
-      } else if (chatSourceEntityId && chatSourceEntityId !== targetId) {
-        const sourceRosterRes = await fetch(
-          `/api/chamber-roster?entityId=${encodeURIComponent(chatSourceEntityId)}&turbo=${smartEnabled}`,
-        );
-        const sourceRoster = (await sourceRosterRes.json()) as {
-          councilEligible?: boolean;
-        };
-        if (sourceRoster.councilEligible) {
-          rosterEntityId = chatSourceEntityId;
-        }
-      }
-
-      const rosterRes = await fetch(
-        `/api/chamber-roster?entityId=${encodeURIComponent(rosterEntityId)}&turbo=${smartEnabled}`,
-      );
-      const roster = (await rosterRes.json()) as {
-        chamberName?: string | null;
-        councilEligible?: boolean;
-        teamEligible?: boolean;
-      };
-      if (roster.chamberName) setChamberName(roster.chamberName);
-      setCouncilTargetEligible(roster.councilEligible !== false);
-      setTeamTargetEligible(roster.teamEligible !== false);
-    } catch {
-      /* gate still usable; server validates on send */
-    }
-  }
-
   function notifyAnswerIfCollapsed() {
     if (!expanded) setHasUnreadAnswer(true);
   }
@@ -612,7 +534,11 @@ export function WorkspaceMayorChat() {
           agentCount: 1,
         });
         markExecutionRunning("Fast: ответ агента…");
-      } else if (target.kind === "mayor" && cityHallOrchestrator && effectiveMode === "fast") {
+      } else if (
+        target.kind === "mayor" &&
+        cityHallOrchestrator &&
+        (effectiveMode === "fast" || effectiveMode === "council")
+      ) {
         targetId = cityHallOrchestrator.chamberRegistryId;
         targetName = cityHallOrchestrator.chamberName;
         roster = [
@@ -624,11 +550,15 @@ export function WorkspaceMayorChat() {
         ];
         beginExecutionProgress({
           taskText: text,
-          mode: "fast",
+          mode: effectiveMode,
           roster,
           agentCount: 1,
         });
-        markExecutionRunning(`Mayor: ${cityHallOrchestrator.agentName}…`);
+        markExecutionRunning(
+          effectiveMode === "council"
+            ? `Mayor (Council): ${cityHallOrchestrator.agentName}…`
+            : `Mayor: ${cityHallOrchestrator.agentName}…`,
+        );
         const localDecision: RouteDecision = {
           targets: [
             {
@@ -860,11 +790,6 @@ export function WorkspaceMayorChat() {
     if ((!text && files.length === 0) || loading || debateLoading) return;
     if (!dockOpen) openDock(target);
 
-    if ((executionMode === "council" || executionMode === "team") && !agentDirectMode) {
-      void openCouncilGate(text, executionMode);
-      return;
-    }
-
     setMessages((prev) => [
       ...prev,
       userMessage(text || "📎 Файлы", files.length > 0 ? pendingFilesToAttachments(files) : undefined),
@@ -874,23 +799,6 @@ export function WorkspaceMayorChat() {
     if (chatFileRef.current) chatFileRef.current.value = "";
     requestAnimationFrame(syncInputHeight);
     void sendTask(text, executionMode, files);
-  }
-
-  function handleCouncilConfirm() {
-    const text = pendingCouncilText.trim();
-    const isEligible = pendingGateMode === "council" ? councilTargetEligible : teamTargetEligible;
-    if (!text || loading || !isEligible) return;
-    setCouncilGateOpen(false);
-    setMessages((prev) => [...prev, userMessage(text)]);
-    setInput("");
-    requestAnimationFrame(syncInputHeight);
-    setPendingCouncilText("");
-    void sendTask(text, pendingGateMode);
-  }
-
-  function handleCouncilCancel() {
-    setCouncilGateOpen(false);
-    setPendingCouncilText("");
   }
 
   async function sendDebate(text: string, tierMode: DebateTierMode) {
@@ -1084,16 +992,6 @@ export function WorkspaceMayorChat() {
 
   return (
     <>
-      <CouncilConfirmationGate
-        open={councilGateOpen}
-        chamberName={chamberName}
-        taskPreview={pendingCouncilText}
-        confirmDisabled={pendingGateMode === "council" ? !councilTargetEligible : !teamTargetEligible}
-        onCancel={handleCouncilCancel}
-        onConfirm={handleCouncilConfirm}
-        mode={pendingGateMode}
-      />
-
       <TechStructureConfirmationGate
         open={structureGateOpen}
         planSummary={pendingStructurePlan?.summary ?? ""}

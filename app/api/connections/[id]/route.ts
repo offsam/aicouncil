@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireInternalSecret } from "@/lib/security/require-internal-secret";
 import {
   fetchConnectionById,
   updateConnectionFields,
@@ -9,6 +10,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const secretDenied = requireInternalSecret(request);
+  if (secretDenied) return secretDenied;
+
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ error: "Supabase не настроен" }, { status: 503 });
   }
@@ -86,6 +90,9 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const secretDenied = requireInternalSecret(request);
+  if (secretDenied) return secretDenied;
+
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ error: "Supabase не настроен" }, { status: 503 });
   }

@@ -5,12 +5,39 @@
 import * as fs from "fs";
 import type { CostTier } from "../lib/cost-tier";
 import { getModelCatalog } from "../lib/model-catalog/build-catalog";
+import { TIER_DEFAULT_PATTERNS } from "../lib/model-catalog/default-chamber-roster-picks";
 import {
+  assessPatternDiscrepancy,
+  buildPatternHaystack,
   classifyCatalogBandWithSource,
   resolveExecutionBand,
   type ResolveExecutionBandResult,
 } from "../lib/model-catalog/resolve-execution-band";
 import { inferCatalogCostTier } from "../lib/model-catalog/infer-cost-tier";
+
+const TIER_ORDER: CostTier[] = ["free", "cheap", "mid", "premium"];
+
+function findCanonicalPatternMatches(haystack: string) {
+  const matches: Array<{ tier: CostTier; patternIndex: number }> = [];
+  for (const tier of TIER_ORDER) {
+    const patterns = TIER_DEFAULT_PATTERNS[tier];
+    for (let i = 0; i < patterns.length; i += 1) {
+      if (patterns[i].test(haystack)) {
+        matches.push({ tier, patternIndex: i });
+        break;
+      }
+    }
+  }
+  return matches;
+}
+
+function canonicalPatternDiscrepancy(band: CostTier, haystack: string) {
+  const patternMatches = findCanonicalPatternMatches(haystack);
+  return {
+    patternMatches,
+    ...assessPatternDiscrepancy(band, patternMatches),
+  };
+}
 
 type Fixture = {
   provider: string;
@@ -23,6 +50,214 @@ type Fixture = {
 
 /** T-1A baseline catalog discrepancy count (pre T-1A.1). */
 const BASELINE_CATALOG_DISCREPANCY_COUNT = 141;
+
+/** T-1A.1 post-fix catalog discrepancy count. */
+const POST_T1A1_CATALOG_DISCREPANCY_COUNT = 50;
+
+/** Post T-1B.1A catalog discrepancy count (before T-1C pattern cleanup). */
+const POST_T1B1A_CATALOG_DISCREPANCY_COUNT = 49;
+/** After T-1C canonical TIER_DEFAULT_PATTERNS cleanup (unchanged by T-1C.1 wiring). */
+const POST_T1C_CATALOG_DISCREPANCY_COUNT = 18;
+
+/** T-1C: each group must match exactly one tier in canonical TIER_DEFAULT_PATTERNS. */
+const T1C_SINGLE_TIER_FIXTURES: Array<{
+  label: string;
+  provider: string;
+  modelId: string;
+  expectedTier: CostTier;
+}> = [
+  {
+    label: "deepseek-chat → mid only",
+    provider: "deepseek",
+    modelId: "deepseek-chat",
+    expectedTier: "mid",
+  },
+  {
+    label: "gemini-2.5-flash → cheap only",
+    provider: "google",
+    modelId: "gemini-2.5-flash",
+    expectedTier: "cheap",
+  },
+  {
+    label: "llama-3.3-70b-versatile → free only",
+    provider: "groq",
+    modelId: "llama-3.3-70b-versatile",
+    expectedTier: "free",
+  },
+  {
+    label: "qwen3-coder:free → free only",
+    provider: "openrouter",
+    modelId: "qwen/qwen3-coder:free",
+    expectedTier: "free",
+  },
+  {
+    label: "qwen3-coder-30b → cheap only",
+    provider: "openrouter",
+    modelId: "qwen/qwen3-coder-30b-a3b-instruct",
+    expectedTier: "cheap",
+  },
+  {
+    label: "qwen3-coder-flash → cheap only",
+    provider: "openrouter",
+    modelId: "qwen/qwen3-coder-flash",
+    expectedTier: "cheap",
+  },
+  {
+    label: "grok-4.20 → premium only",
+    provider: "openrouter",
+    modelId: "x-ai/grok-4.20",
+    expectedTier: "premium",
+  },
+];
+
+const T1C_REGRESSION_UNCHANGED: Array<{
+  label: string;
+  provider: string;
+  modelId: string;
+  expectedTier: CostTier;
+}> = [
+  {
+    label: "claude-haiku unchanged",
+    provider: "anthropic",
+    modelId: "claude-haiku-4-5-20251001",
+    expectedTier: "cheap",
+  },
+  {
+    label: "claude-opus unchanged",
+    provider: "anthropic",
+    modelId: "claude-opus-4-6",
+    expectedTier: "premium",
+  },
+  {
+    label: "gpt-5 unchanged",
+    provider: "openai",
+    modelId: "gpt-5-chat-latest",
+    expectedTier: "premium",
+  },
+  {
+    label: "gemini-pro unchanged",
+    provider: "google",
+    modelId: "gemini-2.5-pro",
+    expectedTier: "premium",
+  },
+];
+
+const T1B1A_ASSERTIONS: Array<{
+  label: string;
+  provider: string;
+  modelId: string;
+  expected: CostTier;
+  expectedSource: string;
+}> = [
+  {
+    label: "x-ai/grok-4.20 → premium",
+    provider: "openrouter",
+    modelId: "x-ai/grok-4.20",
+    expected: "premium",
+    expectedSource: "explicit:grok-4",
+  },
+  {
+    label: "x-ai/grok-4.3 → premium",
+    provider: "openrouter",
+    modelId: "x-ai/grok-4.3",
+    expected: "premium",
+    expectedSource: "explicit:grok-4",
+  },
+  {
+    label: "mistralai/mistral-medium-3.1 → mid",
+    provider: "openrouter",
+    modelId: "mistralai/mistral-medium-3.1",
+    expected: "mid",
+    expectedSource: "explicit:mistral-medium-3.1",
+  },
+  {
+    label: "mistralai/mistral-small-3.1-24b-instruct → cheap",
+    provider: "openrouter",
+    modelId: "mistralai/mistral-small-3.1-24b-instruct",
+    expected: "cheap",
+    expectedSource: "explicit:mistral-small-3.1",
+  },
+  {
+    label: "qwen/qwen3-coder-flash → cheap",
+    provider: "openrouter",
+    modelId: "qwen/qwen3-coder-flash",
+    expected: "cheap",
+    expectedSource: "explicit:qwen3-coder-flash",
+  },
+  {
+    label: "openai/gpt-oss-120b → mid",
+    provider: "openrouter",
+    modelId: "openai/gpt-oss-120b",
+    expected: "mid",
+    expectedSource: "explicit:gpt-oss-120b",
+  },
+  {
+    label: "~anthropic/claude-fable-latest → premium",
+    provider: "openrouter",
+    modelId: "~anthropic/claude-fable-latest",
+    expected: "premium",
+    expectedSource: "explicit:claude-fable-latest",
+  },
+  {
+    label: "openrouter/free (exact modelId) → free",
+    provider: "openrouter",
+    modelId: "openrouter/free",
+    expected: "free",
+    expectedSource: "explicit:openrouter-free-router",
+  },
+];
+
+/** Neighbors that must NOT pick up T-1B.1A rules. */
+const T1B1A_NEIGHBOR_REGRESSION: Array<{
+  label: string;
+  provider: string;
+  modelId: string;
+  expected: CostTier;
+  forbiddenSource?: string;
+}> = [
+  {
+    label: "x-ai/grok-3 (not grok-4) stays default_fallback",
+    provider: "openrouter",
+    modelId: "x-ai/grok-3",
+    expected: "cheap",
+    forbiddenSource: "explicit:grok-4",
+  },
+  {
+    label: "openai/gpt-oss-20b (not 120b) stays default_fallback",
+    provider: "openrouter",
+    modelId: "openai/gpt-oss-20b",
+    expected: "cheap",
+    forbiddenSource: "explicit:gpt-oss-120b",
+  },
+  {
+    label: "qwen/qwen3-coder-30b-a3b-instruct not qwen3-coder-flash",
+    provider: "openrouter",
+    modelId: "qwen/qwen3-coder-30b-a3b-instruct",
+    expected: "cheap",
+    forbiddenSource: "explicit:qwen3-coder-flash",
+  },
+  {
+    label: "qwen/qwen3-coder:free uses :free suffix not flash rule",
+    provider: "openrouter",
+    modelId: "qwen/qwen3-coder:free",
+    expected: "free",
+    forbiddenSource: "explicit:qwen3-coder-flash",
+  },
+  {
+    label: "anthropic/claude-sonnet-4.6 unchanged (T-1A.1)",
+    provider: "anthropic",
+    modelId: "claude-sonnet-4-6",
+    expected: "mid",
+    forbiddenSource: "explicit:claude-fable-latest",
+  },
+  {
+    label: "openrouter/anthropic/claude-opus-4 not openrouter/free",
+    provider: "openrouter",
+    modelId: "anthropic/claude-opus-4",
+    expected: "premium",
+    forbiddenSource: "explicit:openrouter-free-router",
+  },
+];
 
 const HARD_ASSERTIONS: Array<{
   label: string;
@@ -157,7 +392,60 @@ function explainRemainingDiscrepancy(
 }
 
 async function main() {
-  console.log("=== HARD ASSERTIONS (T-1A.1) ===");
+  console.log("\n=== T-1C: single-tier pattern match (canonical TIER_DEFAULT_PATTERNS) ===");
+  for (const fixture of T1C_SINGLE_TIER_FIXTURES) {
+    const haystack = buildPatternHaystack(fixture.provider, fixture.modelId);
+    const matches = findCanonicalPatternMatches(haystack);
+    const tiers = [...new Set(matches.map((m) => m.tier))];
+    record(
+      `${fixture.label}`,
+      tiers.length === 1 && tiers[0] === fixture.expectedTier,
+      { matchedTiers: tiers, expected: fixture.expectedTier },
+    );
+  }
+
+  console.log("\n=== T-1C: regression — untouched pattern groups ===");
+  for (const fixture of T1C_REGRESSION_UNCHANGED) {
+    const haystack = buildPatternHaystack(fixture.provider, fixture.modelId);
+    const matches = findCanonicalPatternMatches(haystack);
+    const tiers = [...new Set(matches.map((m) => m.tier))];
+    record(
+      fixture.label,
+      tiers.length === 1 && tiers[0] === fixture.expectedTier,
+      { matchedTiers: tiers, expected: fixture.expectedTier },
+    );
+  }
+
+  console.log("\n=== HARD ASSERTIONS (T-1B.1A — 7 Class B models) ===");
+  for (const assertion of T1B1A_ASSERTIONS) {
+    const result = resolveExecutionBand(assertion.provider, assertion.modelId);
+    const bandOk = result.band === assertion.expected;
+    const sourceOk = result.source === assertion.expectedSource;
+    record(
+      assertion.label,
+      bandOk && sourceOk,
+      {
+        got: result.band,
+        expected: assertion.expected,
+        source: result.source,
+        expectedSource: assertion.expectedSource,
+      },
+    );
+  }
+
+  console.log("\n=== NEIGHBOR REGRESSION (T-1B.1A must not over-match) ===");
+  for (const neighbor of T1B1A_NEIGHBOR_REGRESSION) {
+    const result = resolveExecutionBand(neighbor.provider, neighbor.modelId);
+    const bandOk = result.band === neighbor.expected;
+    const sourceOk = !neighbor.forbiddenSource || result.source !== neighbor.forbiddenSource;
+    record(
+      neighbor.label,
+      bandOk && sourceOk,
+      { got: result.band, source: result.source, expected: neighbor.expected },
+    );
+  }
+
+  console.log("\n=== HARD ASSERTIONS (T-1A.1 regression) ===");
   for (const assertion of HARD_ASSERTIONS) {
     const result = resolveExecutionBand(assertion.provider, assertion.modelId, {
       promptPrice: assertion.promptPrice,
@@ -262,6 +550,8 @@ async function main() {
 
   let catalogLoaded = false;
   let catalogDiscrepancyCount = 0;
+  let resolvePatternDiscrepancyCount = 0;
+  let canonicalPatternDiscrepancyCount = 0;
   const catalogDiscrepancies: Array<{
     key: string;
     band: CostTier;
@@ -288,22 +578,56 @@ async function main() {
       const result = resolveExecutionBand(model.gateway, model.modelId, {
         patternHaystackExtra: `${model.displayName} ${model.originProviderSlug}`,
       });
+      const haystack = buildPatternHaystack(
+        model.gateway,
+        model.modelId,
+        `${model.displayName} ${model.originProviderSlug}`,
+      );
+      const canonical = canonicalPatternDiscrepancy(result.band, haystack);
       if (result.patternDiscrepancy) {
+        resolvePatternDiscrepancyCount += 1;
         catalogDiscrepancies.push({
           key: model.key,
           band: result.band,
-          patternTiers: [...new Set(result.patternMatches.map((m) => m.tier))].join(",") || "none",
+          patternTiers:
+            [...new Set(result.patternMatches.map((m) => m.tier))].join(",") || "none",
           detail: result.patternDiscrepancyDetail,
         });
       }
+      if (canonical.patternDiscrepancy) {
+        canonicalPatternDiscrepancyCount += 1;
+      }
     }
 
-    catalogDiscrepancyCount = catalogDiscrepancies.length;
-    const resolved = BASELINE_CATALOG_DISCREPANCY_COUNT - catalogDiscrepancyCount;
+    catalogDiscrepancyCount = resolvePatternDiscrepancyCount;
+    record(
+      "resolveExecutionBand.patternDiscrepancy vs canonical TIER_DEFAULT_PATTERNS parity",
+      resolvePatternDiscrepancyCount === canonicalPatternDiscrepancyCount,
+      {
+        resolveExecutionBand: resolvePatternDiscrepancyCount,
+        canonical: canonicalPatternDiscrepancyCount,
+      },
+    );
+    record(
+      "catalog discrepancy count unchanged from T-1C (18)",
+      catalogDiscrepancyCount === POST_T1C_CATALOG_DISCREPANCY_COUNT,
+      { got: catalogDiscrepancyCount, expected: POST_T1C_CATALOG_DISCREPANCY_COUNT },
+    );
+    const resolvedFromT1A = BASELINE_CATALOG_DISCREPANCY_COUNT - catalogDiscrepancyCount;
+    const resolvedFromT1A1 = POST_T1A1_CATALOG_DISCREPANCY_COUNT - catalogDiscrepancyCount;
+    const resolvedFromT1B1A = POST_T1B1A_CATALOG_DISCREPANCY_COUNT - catalogDiscrepancyCount;
 
     console.log(`Baseline catalog discrepancies (T-1A): ${BASELINE_CATALOG_DISCREPANCY_COUNT}`);
-    console.log(`Current catalog discrepancies: ${catalogDiscrepancyCount}`);
-    console.log(`Resolved by T-1A.1: ${resolved}`);
+    console.log(`Post T-1A.1 catalog discrepancies: ${POST_T1A1_CATALOG_DISCREPANCY_COUNT}`);
+    console.log(`Post T-1B.1A catalog discrepancies: ${POST_T1B1A_CATALOG_DISCREPANCY_COUNT}`);
+    console.log(`Post T-1C catalog discrepancies (baseline for T-1C.1): ${POST_T1C_CATALOG_DISCREPANCY_COUNT}`);
+    console.log(`Current catalog discrepancies (resolveExecutionBand): ${catalogDiscrepancyCount}`);
+    console.log(
+      `Pattern source parity: resolveExecutionBand=${resolvePatternDiscrepancyCount} canonical=${canonicalPatternDiscrepancyCount}`,
+    );
+    console.log(`Resolved since T-1A: ${resolvedFromT1A}`);
+    console.log(`Resolved since T-1A.1: ${resolvedFromT1A1}`);
+    console.log(`Resolved since T-1B.1A (T-1C): ${resolvedFromT1B1A}`);
     console.log(`Remaining: ${catalogDiscrepancyCount}`);
 
     console.log("\n=== Remaining catalog discrepancies (each explained) ===");
