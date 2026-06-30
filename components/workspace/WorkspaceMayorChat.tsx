@@ -124,6 +124,7 @@ function formatRoutingMeta(result: ExecuteChatTaskResult): string | undefined {
     if (result.agentName) parts.push(result.agentName);
     if (result.executionMode === "team") parts.push("Team");
     if (result.executionMode === "council") parts.push("Council");
+    if (result.executionMode === "turbo") parts.push("Turbo");
     return parts.join(" → ");
   }
   const t = result.routing.targets[0];
@@ -322,7 +323,7 @@ export function WorkspaceMayorChat() {
   useEffect(() => {
     if (teamDisabled && executionMode === "team") setExecutionMode("fast");
     if (councilDisabled && executionMode === "council") setExecutionMode("fast");
-    if (turboDisabled && (executionMode as string) === "turbo") setExecutionMode("fast");
+    if (turboDisabled && executionMode === "turbo") setExecutionMode("fast");
   }, [teamDisabled, councilDisabled, turboDisabled, executionMode, setExecutionMode]);
 
   useEffect(() => {
@@ -933,17 +934,16 @@ export function WorkspaceMayorChat() {
                 aria-label="Режим выполнения"
               >
                 {EXECUTION_MODE_OPTIONS.map((option) => {
-                  const optionId = option.id as string;
                   const disabled =
-                    (optionId === "team" && teamDisabled) ||
-                    (optionId === "council" && councilDisabled) ||
-                    (optionId === "turbo" && turboDisabled);
+                    (option.id === "team" && teamDisabled) ||
+                    (option.id === "council" && councilDisabled) ||
+                    (option.id === "turbo" && turboDisabled);
                   const disabledReason =
-                    optionId === "team" && teamDisabled
+                    option.id === "team" && teamDisabled
                       ? "Нет cheap-агентов в городе (вне City Hall)"
-                      : optionId === "council" && councilDisabled
+                      : option.id === "council" && councilDisabled
                         ? "Нет mid-агентов в городе (вне City Hall)"
-                        : optionId === "turbo" && turboDisabled
+                        : option.id === "turbo" && turboDisabled
                           ? "Нет premium-агентов в городе (вне City Hall)"
                           : undefined;
                   return (

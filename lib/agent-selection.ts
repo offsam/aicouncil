@@ -1,18 +1,12 @@
 import { getSupabaseAdmin } from "./supabase/admin";
 import { COST_TIER_ORDER, normalizeCostTier, type CostTier } from "./cost-tier";
+import type { ExecutionMode } from "./execution-mode";
+import {
+  getAllowedTiersForExecutionMode,
+  getRequiredTierForExecutionMode,
+  resolveExecutionModeWithLegacyTurbo,
+} from "./execution-mode-tier-policy";
 import { resolveMainChamber } from "./workspace/resolve-main-chamber";
-
-const EXECUTION_MODE_ALLOWED_TIERS: Record<"fast" | "team" | "council", CostTier[]> = {
-  fast: ["free"],
-  team: ["free", "cheap"],
-  council: ["free", "cheap", "mid"],
-};
-
-const EXECUTION_MODE_REQUIRED_TIER: Record<"fast" | "team" | "council", CostTier> = {
-  fast: "free",
-  team: "cheap",
-  council: "mid",
-};
 
 const SLUG_WORKFLOW_PREFERENCE: Record<string, number> = {
   groq: 1,
@@ -118,9 +112,29 @@ async function listAgentCandidatesForChamberEntity(
     }));
 }
 
+function resolveEffectiveExecutionMode(
+  mode: ExecutionMode,
+  options?: { turbo?: boolean },
+): ExecutionMode {
+  return resolveExecutionModeWithLegacyTurbo(mode, options?.turbo);
+}
+
+function requiredTierErrorMessage(mode: ExecutionMode): string {
+  if (mode === "fast") {
+    return "В этом отделе не настроены бесплатные агенты, используйте другой режим";
+  }
+  if (mode === "team") {
+    return "В этом отделе не настроены cheap-агенты, используйте другой режим";
+  }
+  if (mode === "council") {
+    return "В этом отделе не настроены mid-агенты, используйте другой режим";
+  }
+  return "В этом отделе нет агентов для Turbo, используйте другой режим";
+}
+
 export async function selectAgentForChamberEntity(
   targetChamberEntityId: string,
-  options?: { turbo?: boolean; executionMode?: "fast" | "team" | "council" },
+  options?: { turbo?: boolean; executionMode?: ExecutionMode },
 ): Promise<SelectedAgent | null> {
   if (options?.executionMode) {
     return selectPrimaryAgentForExecutionMode(
@@ -133,16 +147,20 @@ export async function selectAgentForChamberEntity(
   return candidates[0] ?? null;
 }
 
-/** Single agent at the tier required by Fast / Team / Council (+ Turbo → premium). */
+/** Single agent at the tier required by Fast / Team / Council; Turbo picks first eligible. */
 export async function selectPrimaryAgentForExecutionMode(
   targetChamberEntityId: string,
-  mode: "fast" | "team" | "council",
+  mode: ExecutionMode,
   options?: { turbo?: boolean },
 ): Promise<SelectedAgent | null> {
   const agents = await selectAgentsForExecutionMode(targetChamberEntityId, mode, options);
   if (agents.length === 0) return null;
 
-  const requiredTier = options?.turbo ? "premium" : EXECUTION_MODE_REQUIRED_TIER[mode];
+  const effectiveMode = resolveEffectiveExecutionMode(mode, options);
+  const requiredTier = getRequiredTierForExecutionMode(effectiveMode);
+  if (requiredTier === null) {
+    return agents[0] ?? null;
+  }
   const atRequired = agents.filter((a) => a.costTier === requiredTier);
   return atRequired[0] ?? agents[0] ?? null;
 }
@@ -181,30 +199,22 @@ export async function selectAgentsForChamberEntity(
 
 export async function selectAgentsForExecutionMode(
   targetChamberEntityId: string,
-  mode: "fast" | "team" | "council",
+  mode: ExecutionMode,
   options?: { turbo?: boolean },
 ): Promise<SelectedAgent[]> {
+  const effectiveMode = resolveEffectiveExecutionMode(mode, options);
   const candidates = await listAgentCandidatesForChamberEntity(targetChamberEntityId, {
     rosterOnly: true,
   });
-  const allowed = options?.turbo
-    ? (["free", "cheap", "mid", "premium"] as CostTier[])
-    : EXECUTION_MODE_ALLOWED_TIERS[mode];
+  const allowed = getAllowedTiersForExecutionMode(effectiveMode);
   const selected = candidates.filter((c) => allowed.includes(c.costTier));
-  const requiredTier = options?.turbo
-    ? "premium"
-    : EXECUTION_MODE_REQUIRED_TIER[mode];
-  if (!selected.some((c) => c.costTier === requiredTier)) {
-    if (options?.turbo) {
-      throw new Error("В этом отделе не настроены premium-агенты, используйте другой режим");
-    }
-    if (mode === "fast") {
-      throw new Error("В этом отделе не настроены бесплатные агенты, используйте другой режим");
-    }
-    if (mode === "team") {
-      throw new Error("В этом отделе не настроены cheap-агенты, используйте другой режим");
-    }
-    throw new Error("В этом отделе не настроены mid-агенты, используйте другой режим");
+  const requiredTier = getRequiredTierForExecutionMode(effectiveMode);
+
+  if (requiredTier !== null && !selected.some((c) => c.costTier === requiredTier)) {
+    throw new Error(requiredTierErrorMessage(effectiveMode));
+  }
+  if (requiredTier === null && selected.length === 0) {
+    throw new Error(requiredTierErrorMessage("turbo"));
   }
   return selected;
 }

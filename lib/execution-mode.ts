@@ -1,9 +1,14 @@
-export type ExecutionMode = "fast" | "team" | "council";
+export type ExecutionMode = "fast" | "team" | "council" | "turbo";
 
-export const EXECUTION_MODES: ExecutionMode[] = ["fast", "team", "council"];
+export const EXECUTION_MODES: ExecutionMode[] = ["fast", "team", "council", "turbo"];
 
 export function isExecutionMode(value: unknown): value is ExecutionMode {
-  return value === "fast" || value === "team" || value === "council";
+  return (
+    value === "fast" ||
+    value === "team" ||
+    value === "council" ||
+    value === "turbo"
+  );
 }
 
 export type ExecutionModeOption = {
@@ -31,6 +36,12 @@ export const EXECUTION_MODE_OPTIONS: ExecutionModeOption[] = [
     id: "council",
     label: "Council",
     hint: "Full council report",
-    estimate: "Council · ~45 сек · премиум · потребует подтверждения",
+    estimate: "Council · ~45 сек · несколько mid-экспертов",
+  },
+  {
+    id: "turbo",
+    label: "Turbo",
+    hint: "All tiers incl. premium",
+    estimate: "Turbo · все tier · premium когда есть",
   },
 ];

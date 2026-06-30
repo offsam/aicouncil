@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeChatTask } from "@/lib/execute-chat-task";
 import { isExecutionMode, type ExecutionMode } from "@/lib/execution-mode";
+import { resolveExecutionModeWithLegacyTurbo } from "@/lib/execution-mode-tier-policy";
 import { toUserFacingChatError, chatErrorHttpStatus } from "@/lib/provider-user-error";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
 
@@ -33,16 +34,20 @@ export async function POST(request: NextRequest) {
     }
 
     const sourceEntityId = body.sourceEntityId?.trim() || undefined;
-    const executionMode: ExecutionMode | undefined = isExecutionMode(body.executionMode)
-      ? body.executionMode
-      : undefined;
+    const baseMode = isExecutionMode(body.executionMode) ? body.executionMode : undefined;
+    const executionMode =
+      baseMode !== undefined
+        ? resolveExecutionModeWithLegacyTurbo(baseMode, body.turbo)
+        : body.turbo
+          ? "turbo"
+          : undefined;
 
     const result = await executeChatTask(taskText, sourceEntityId, executionMode, {
       forceFailSlugs:
         process.env.NODE_ENV !== "production" ? body.forceFailSlugs : undefined,
       targetAgentId: body.targetAgentId?.trim() || undefined,
       directTargetEntityId: body.directTargetEntityId?.trim() || undefined,
-      turbo: !!body.turbo,
+      turbo: body.turbo,
       attachmentIds: Array.isArray(body.attachmentIds)
         ? body.attachmentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
         : undefined,

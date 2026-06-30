@@ -45,18 +45,17 @@ export function ExecutionModeSelector({
       }
     >
       {EXECUTION_MODE_OPTIONS.map((option) => {
-        const optionId = option.id as string;
         const selected = value === option.id;
         const disabled =
-          (optionId === "team" && teamDisabled) ||
-          (optionId === "council" && councilDisabled) ||
-          (optionId === "turbo" && turboDisabled);
+          (option.id === "team" && teamDisabled) ||
+          (option.id === "council" && councilDisabled) ||
+          (option.id === "turbo" && turboDisabled);
         const title =
-          optionId === "team" && teamDisabled
+          option.id === "team" && teamDisabled
             ? teamDisabledReason
-            : optionId === "council" && councilDisabled
+            : option.id === "council" && councilDisabled
               ? councilDisabledReason
-              : optionId === "turbo" && turboDisabled
+              : option.id === "turbo" && turboDisabled
                 ? turboDisabledReason
                 : option.hint;
 
@@ -93,7 +92,7 @@ export function ExecutionModeSelector({
                   $$
                 </span>
               )}
-              {optionId === "turbo" && !disabled && (
+              {option.id === "turbo" && !disabled && (
                 <span
                   data-testid="workspace-execution-mode-turbo-badge"
                   className="rounded bg-white/10 px-1 text-[9px] font-bold text-[var(--ws-text-secondary)]"

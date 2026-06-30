@@ -13,7 +13,7 @@ import type { ExecutionMode } from "@/lib/execution-mode";
 type WorkspaceExecutionModeContextValue = {
   executionMode: ExecutionMode;
   setExecutionMode: (mode: ExecutionMode) => void;
-  /** Smart mode (UI); backend still uses turbo flag for premium agent selection. */
+  /** Legacy Smart checkbox — derived from executionMode === "turbo"; toggling sets mode. */
   smartEnabled: boolean;
   setSmartEnabled: (enabled: boolean) => void;
 };
@@ -31,15 +31,10 @@ export function WorkspaceExecutionModeProvider({
   initialMode?: ExecutionMode;
 }) {
   const [executionMode, setExecutionModeState] = useState<ExecutionMode>(initialMode);
-  const [smartEnabled, setSmartEnabledState] = useState(false);
+  const smartEnabled = executionMode === "turbo";
 
-  const setSmartEnabled = useCallback((enabled: boolean) => {
-    setSmartEnabledState(enabled);
-  }, []);
-
-  const setExecutionMode = useCallback(
+  const persistExecutionMode = useCallback(
     (mode: ExecutionMode) => {
-      setExecutionModeState(mode);
       void fetch(`/api/offices/${officeId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -47,6 +42,31 @@ export function WorkspaceExecutionModeProvider({
       }).catch(() => {});
     },
     [officeId],
+  );
+
+  const setExecutionMode = useCallback(
+    (mode: ExecutionMode) => {
+      setExecutionModeState(mode);
+      persistExecutionMode(mode);
+    },
+    [persistExecutionMode],
+  );
+
+  const setSmartEnabled = useCallback(
+    (enabled: boolean) => {
+      if (enabled) {
+        setExecutionMode("turbo");
+        return;
+      }
+      setExecutionModeState((prev) => {
+        if (prev === "turbo") {
+          persistExecutionMode("fast");
+          return "fast";
+        }
+        return prev;
+      });
+    },
+    [persistExecutionMode, setExecutionMode],
   );
 
   const value = useMemo(

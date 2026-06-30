@@ -1,5 +1,5 @@
 import { AI_COUNCIL_OFFICE_ID, resolveAgentDbId } from "./ai-council-ids";
-import { selectAgentsForChamberEntity, type SelectedAgent } from "./agent-selection";
+import { selectAgentsForChamberEntity, selectAgentsForExecutionMode, type SelectedAgent } from "./agent-selection";
 import { invokeAgentForWorkflow } from "./invoke-agent";
 import { registrySlugToFrontendId } from "./route-agent-ids";
 import { getSupabaseAdmin } from "./supabase/admin";
@@ -119,14 +119,15 @@ export async function executeParallelAgents(
 
   const agents =
     params.agents ??
-    (await selectAgentsForChamberEntity(
-      params.targetChamberRegistryId,
-      params.agentCount,
-      {
-        rosterOnly: params.rosterOnly,
-        turbo: params.turbo,
-      },
-    ));
+    (params.turbo
+      ? await selectAgentsForExecutionMode(params.targetChamberRegistryId, "turbo")
+      : await selectAgentsForChamberEntity(
+          params.targetChamberRegistryId,
+          params.agentCount,
+          {
+            rosterOnly: params.rosterOnly,
+          },
+        ));
 
   if (agents.length === 0) {
     throw new Error("No agents available for parallel execution");

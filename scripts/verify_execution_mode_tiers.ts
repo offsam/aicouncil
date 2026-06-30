@@ -18,8 +18,8 @@ for (const line of fs.readFileSync(".env.local", "utf8").split("\n")) {
   if (i > 0) process.env[line.slice(0, i).trim()] = line.slice(i + 1).trim();
 }
 
-/** t_ТолькоФри_Башня main — free-only roster (routing diagnostic fixture). */
-const FREE_ONLY_MAIN_CHAMBER = "fd5538ad-df4f-494f-af96-e6528132f5e7";
+/** t_ТолькоФри_Башня manager — free-only roster (routing diagnostic fixture). */
+const FREE_ONLY_MAIN_CHAMBER = "2e9694d9-244e-487b-9579-a77eae571d1f";
 
 async function findChamberForMode(mode: "fast" | "team"): Promise<string | null> {
   const supabase = getSupabaseAdmin();
@@ -81,8 +81,27 @@ async function main() {
 
   for (const tier of tiers) {
     record(
-      `smart mode: ${tier} highlighted=${isAgentTierHighlightedForWorkspace(tier, "fast", true)}`,
-      isAgentTierHighlightedForWorkspace(tier, "fast", true) === (tier === "premium"),
+      `turbo mode: ${tier} eligible=${isCostTierActiveForExecutionMode(tier, "turbo")}`,
+      isCostTierActiveForExecutionMode(tier, "turbo") === true,
+    );
+  }
+
+  record(
+    "max active tier map",
+    EXECUTION_MODE_MAX_ACTIVE_TIER.fast === "free" &&
+      EXECUTION_MODE_MAX_ACTIVE_TIER.team === "cheap" &&
+      EXECUTION_MODE_MAX_ACTIVE_TIER.council === "mid" &&
+      EXECUTION_MODE_MAX_ACTIVE_TIER.turbo === "premium",
+  );
+
+  for (const tier of tiers) {
+    record(
+      `legacy smart on: ${tier} highlighted (all tiers)`,
+      isAgentTierHighlightedForWorkspace(tier, "fast", true) === true,
+    );
+    record(
+      `turbo mode canvas: ${tier} highlighted`,
+      isAgentTierHighlightedForWorkspace(tier, "turbo") === true,
     );
     record(
       `smart off: fast ${tier} unchanged`,

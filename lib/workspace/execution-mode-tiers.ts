@@ -1,16 +1,17 @@
-import type { CostTier } from "@/lib/cost-tier";
-import { COST_TIER_ORDER, normalizeCostTier } from "@/lib/cost-tier";
 import type { ExecutionMode } from "@/lib/execution-mode";
 import { isExecutionMode } from "@/lib/execution-mode";
+import {
+  EXECUTION_MODE_MAX_ACTIVE_TIER,
+  isCostTierAllowedForExecutionMode,
+} from "@/lib/execution-mode-tier-policy";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { WorkspaceMeta } from "./constants";
 
-/** Highest cost tier eligible to respond when a given execution mode is active. */
-export const EXECUTION_MODE_MAX_ACTIVE_TIER: Record<ExecutionMode, CostTier> = {
-  fast: "free",
-  team: "cheap",
-  council: "mid",
-};
+export {
+  EXECUTION_MODE_MAX_ACTIVE_TIER,
+  isCostTierActiveForExecutionMode,
+  isCostTierAllowedForExecutionMode,
+} from "@/lib/execution-mode-tier-policy";
 
 export function parseExecutionModeFromWorkspaceMeta(raw: unknown): ExecutionMode {
   if (!raw || typeof raw !== "object") return "fast";
@@ -18,25 +19,15 @@ export function parseExecutionModeFromWorkspaceMeta(raw: unknown): ExecutionMode
   return isExecutionMode(mode) ? mode : "fast";
 }
 
-export function isCostTierActiveForExecutionMode(
-  tier: CostTier | string | null | undefined,
-  mode: ExecutionMode,
-): boolean {
-  const normalized = normalizeCostTier(tier);
-  const maxTier = EXECUTION_MODE_MAX_ACTIVE_TIER[mode];
-  return COST_TIER_ORDER[normalized] <= COST_TIER_ORDER[maxTier];
-}
-
-/** Canvas tier glow: Smart highlights premium ($$$); otherwise execution mode caps. */
+/** Canvas tier glow — uses the same allowed-tier policy as backend selection. */
 export function isAgentTierHighlightedForWorkspace(
-  tier: CostTier | string | null | undefined,
+  tier: Parameters<typeof isCostTierAllowedForExecutionMode>[0],
   mode: ExecutionMode,
+  /** @deprecated Legacy Smart checkbox — mirrors executionMode === "turbo" when true. */
   smartEnabled = false,
 ): boolean {
-  if (smartEnabled) {
-    return normalizeCostTier(tier) === "premium";
-  }
-  return isCostTierActiveForExecutionMode(tier, mode);
+  const effectiveMode: ExecutionMode = smartEnabled ? "turbo" : mode;
+  return isCostTierAllowedForExecutionMode(tier, effectiveMode);
 }
 
 /** City-wide execution mode from offices.workspace_meta (defaults to cheapest-only). */

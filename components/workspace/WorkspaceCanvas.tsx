@@ -429,7 +429,7 @@ export function WorkspaceCanvas({
   const cityNameRef = useRef("AI Council");
   const { activeRouteHighlight, registerRouteLookup, setRouteSourceEntityId, executionProgress } =
     useWorkspaceRoute();
-  const { executionMode, smartEnabled } = useWorkspaceExecutionMode();
+  const { executionMode } = useWorkspaceExecutionMode();
   const { setSelection, setSelectedTarget, registerSnapshot, registerActions, nameByRegistryId, selectedTargets, openInspector, closeInspector, inspectorOpen } =
     useWorkspaceSelection();
   const { t } = useWorkspaceLocale();
@@ -1164,7 +1164,6 @@ export function WorkspaceCanvas({
         const eligible = isAgentTierHighlightedForWorkspace(
           data.costTier,
           executionMode,
-          smartEnabled,
         );
         if (data.executionTierEligible === eligible) return n;
         return {
@@ -1178,7 +1177,6 @@ export function WorkspaceCanvas({
     );
   }, [
     executionMode,
-    smartEnabled,
     executionProgress?.phase,
     activeRouteHighlight,
     loading,

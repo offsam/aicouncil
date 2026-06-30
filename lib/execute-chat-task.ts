@@ -322,20 +322,24 @@ async function executeFastMode(
   };
 }
 
-async function executeTeamMode(
+type ParallelExecutionMode = Exclude<ExecutionMode, "fast">;
+
+async function executeParallelExecutionMode(
   taskText: string,
   decision: RouteDecision,
+  mode: ParallelExecutionMode,
   options?: { forceFailSlugs?: string[]; turbo?: boolean },
 ): Promise<ExecuteChatTaskResult> {
   const routedTargetId = decision.targets[0]?.entityRegistryId || GENERAL_INTAKE_ID;
   const chosenTargetId = await resolveExecutionTargetChamberRegistryId(routedTargetId);
 
-  const agents = await selectAgentsForExecutionMode(routedTargetId, "team", options);
+  const agents = await selectAgentsForExecutionMode(routedTargetId, mode, options);
 
   console.info(
-    `[executeChatTask] executionMode=team agentCount=${agents.length} target=${chosenTargetId}`,
+    `[executeChatTask] executionMode=${mode} agentCount=${agents.length} target=${chosenTargetId}`,
   );
 
+  const modeStart = Date.now();
   const parallel = await executeParallelAgents({
     targetChamberRegistryId: chosenTargetId,
     question: taskText,
@@ -344,17 +348,17 @@ async function executeTeamMode(
     rosterOnly: true,
     logToRequestLogs: true,
     forceFailSlugs: options?.forceFailSlugs,
-    turbo: options?.turbo,
+    turbo: mode === "turbo" ? true : options?.turbo,
   });
 
   const invokedCount = parallel.invokedCount;
   if (decision.routingLogId) {
-    await updateRoutingLogAgentCount(decision.routingLogId, invokedCount, "team");
+    await updateRoutingLogAgentCount(decision.routingLogId, invokedCount, mode);
     decision.agentCount = invokedCount;
   }
 
   const nameMap = await resolveAgentNames(parallel.results.map((r) => r.slug));
-  const teamAgents: TeamAgentAnswer[] = parallel.results.map((r) => ({
+  const parallelAgents: TeamAgentAnswer[] = parallel.results.map((r) => ({
     agentId: r.agentId,
     slug: r.slug,
     agentName: nameMap.get(r.slug) ?? r.slug,
@@ -370,124 +374,11 @@ async function executeTeamMode(
 
   let synthesis: AnalysisReport | null = null;
   let summary = "";
-
-  if (successCount >= 2) {
-    try {
-      const chamberLead = await resolveChamberLeadForSynthesis(
-        chosenTargetId,
-        successResults,
-        nameMap,
-      );
-      const { report } = await runConsensusAnalysis(
-        successResults.map((r) => ({
-          agent: nameMap.get(r.slug) ?? r.slug,
-          answer: r.answer!,
-        })),
-        "team",
-        { chamberLead },
-      );
-      synthesis = report;
-      summary = report.finalVerdict || report.consensus;
-    } catch (err) {
-      console.error("[executeChatTask] team synthesis failed:", err);
-      summary = successResults.map((r) => r.answer).join("\n\n---\n\n");
-    }
-  } else if (successCount === 1) {
-    summary = successResults[0].answer ?? "";
-  } else {
-    throw new Error("Ни один эксперт не смог ответить");
-  }
-
-  const partialBanner = partial
-    ? `⚠ Частичный результат: ${successCount} из ${invokedCount} экспертов ответили. Сводка по доступным данным.\n\n`
-    : "";
-
-  const answer = summary;
-
-  const supabase = getSupabaseAdmin();
-  const { data: targetRow } = await supabase
-    .from("entity_registry")
-    .select("name")
-    .eq("id", chosenTargetId)
-    .maybeSingle();
-
-  await archiveChamberAnswer({
-    entityRegistryId: chosenTargetId,
-    taskText,
-    answer: `${partialBanner}${summary}`,
-    agentName: `${successCount} экспертов`,
-    chamberName: targetRow?.name ?? null,
-  });
-
-  return {
-    mode: "single",
-    executionMode: "team",
-    answer,
-    routing: decision,
-    targetName: targetRow?.name ?? null,
-    agentName: `${successCount} экспертов`,
-    agentId: null,
-    team: {
-      partial,
-      invokedCount,
-      successCount,
-      summary,
-      synthesis,
-      agents: teamAgents,
-    },
-  };
-}
-
-async function executeCouncilMode(
-  taskText: string,
-  decision: RouteDecision,
-  options?: { forceFailSlugs?: string[]; turbo?: boolean },
-): Promise<ExecuteChatTaskResult> {
-  const routedTargetId = decision.targets[0]?.entityRegistryId || GENERAL_INTAKE_ID;
-  const chosenTargetId = await resolveExecutionTargetChamberRegistryId(routedTargetId);
-
-  const agents = await selectAgentsForExecutionMode(routedTargetId, "council", options);
-
-  console.info(
-    `[executeChatTask] executionMode=council agentCount=${agents.length} target=${chosenTargetId}`,
-  );
-
-  const councilStart = Date.now();
-  const parallel = await executeParallelAgents({
-    targetChamberRegistryId: chosenTargetId,
-    question: taskText,
-    agentCount: agents.length,
-    agents,
-    rosterOnly: true,
-    logToRequestLogs: true,
-    forceFailSlugs: options?.forceFailSlugs,
-    turbo: options?.turbo,
-  });
-
-  const invokedCount = parallel.invokedCount;
-  if (decision.routingLogId) {
-    await updateRoutingLogAgentCount(decision.routingLogId, invokedCount, "council");
-    decision.agentCount = invokedCount;
-  }
-
-  const nameMap = await resolveAgentNames(parallel.results.map((r) => r.slug));
-  const councilAgents: TeamAgentAnswer[] = parallel.results.map((r) => ({
-    agentId: r.agentId,
-    slug: r.slug,
-    agentName: nameMap.get(r.slug) ?? r.slug,
-    status: r.status,
-    answer: r.answer,
-    error: r.error,
-    latencyMs: r.latencyMs,
-  }));
-
-  const successResults = parallel.results.filter((r) => r.status === "success" && r.answer);
-  const successCount = successResults.length;
-  const partial = successCount < invokedCount;
-
   let report: AnalysisReport | null = null;
   let answerBody = "";
 
+  const consensusVariant = mode === "team" ? "team" : "council";
+
   if (successCount >= 2) {
     try {
       const chamberLead = await resolveChamberLeadForSynthesis(
@@ -495,33 +386,44 @@ async function executeCouncilMode(
         successResults,
         nameMap,
       );
-      const synthesis = await runConsensusAnalysis(
+      const consensus = await runConsensusAnalysis(
         successResults.map((r) => ({
           agent: nameMap.get(r.slug) ?? r.slug,
           answer: r.answer!,
         })),
-        "council",
+        consensusVariant,
         { chamberLead },
       );
-      report = synthesis.report;
-      answerBody = report.finalVerdict || report.consensus;
+      synthesis = consensus.report;
+      report = consensus.report;
+      const verdict = report.finalVerdict || report.consensus;
+      summary = verdict;
+      answerBody = verdict;
     } catch (err) {
-      console.error("[executeChatTask] council synthesis failed:", err);
-      answerBody = successResults.map((r) => r.answer).join("\n\n---\n\n");
+      console.error(`[executeChatTask] ${mode} synthesis failed:`, err);
+      const joined = successResults.map((r) => r.answer).join("\n\n---\n\n");
+      summary = joined;
+      answerBody = joined;
     }
   } else if (successCount === 1) {
-    answerBody = successResults[0].answer ?? "";
+    summary = successResults[0].answer ?? "";
+    answerBody = summary;
   } else {
     throw new Error("Ни один эксперт не смог ответить");
   }
 
-  const partialBanner = partial
-    ? successCount >= 2
-      ? `⚠ Не все эксперты ответили: ${successCount} из ${invokedCount}. Отчёт по доступным данным.\n\n`
-      : `⚠ Частичный Council: только 1 из ${invokedCount} экспертов ответил.\n\n`
-    : "";
+  const partialBanner =
+    mode === "team"
+      ? partial
+        ? `⚠ Частичный результат: ${successCount} из ${invokedCount} экспертов ответили. Сводка по доступным данным.\n\n`
+        : ""
+      : partial
+        ? successCount >= 2
+          ? `⚠ Не все эксперты ответили: ${successCount} из ${invokedCount}. Отчёт по доступным данным.\n\n`
+          : `⚠ Частичный ${mode === "turbo" ? "Turbo" : "Council"}: только 1 из ${invokedCount} экспертов ответил.\n\n`
+        : "";
 
-  const answer = answerBody;
+  const answer = mode === "team" ? summary : answerBody;
 
   const supabase = getSupabaseAdmin();
   const { data: targetRow } = await supabase
@@ -533,14 +435,34 @@ async function executeCouncilMode(
   await archiveChamberAnswer({
     entityRegistryId: chosenTargetId,
     taskText,
-    answer: `${partialBanner}${answerBody}`,
+    answer: `${partialBanner}${answer}`,
     agentName: `${successCount} экспертов`,
     chamberName: targetRow?.name ?? null,
   });
 
+  if (mode === "team") {
+    return {
+      mode: "single",
+      executionMode: "team",
+      answer,
+      routing: decision,
+      targetName: targetRow?.name ?? null,
+      agentName: `${successCount} экспертов`,
+      agentId: null,
+      team: {
+        partial,
+        invokedCount,
+        successCount,
+        summary,
+        synthesis,
+        agents: parallelAgents,
+      },
+    };
+  }
+
   return {
     mode: "single",
-    executionMode: "council",
+    executionMode: mode,
     answer,
     routing: decision,
     targetName: targetRow?.name ?? null,
@@ -551,10 +473,34 @@ async function executeCouncilMode(
       invokedCount,
       successCount,
       report,
-      agents: councilAgents,
-      wallTimeMs: Date.now() - councilStart,
+      agents: parallelAgents,
+      wallTimeMs: Date.now() - modeStart,
     },
   };
+}
+
+async function executeTeamMode(
+  taskText: string,
+  decision: RouteDecision,
+  options?: { forceFailSlugs?: string[]; turbo?: boolean },
+): Promise<ExecuteChatTaskResult> {
+  return executeParallelExecutionMode(taskText, decision, "team", options);
+}
+
+async function executeCouncilMode(
+  taskText: string,
+  decision: RouteDecision,
+  options?: { forceFailSlugs?: string[]; turbo?: boolean },
+): Promise<ExecuteChatTaskResult> {
+  return executeParallelExecutionMode(taskText, decision, "council", options);
+}
+
+async function executeTurboMode(
+  taskText: string,
+  decision: RouteDecision,
+  options?: { forceFailSlugs?: string[]; turbo?: boolean },
+): Promise<ExecuteChatTaskResult> {
+  return executeParallelExecutionMode(taskText, decision, "turbo", options);
 }
 
 async function executeDirectAgentMode(
@@ -777,6 +723,38 @@ async function executeManagerTask(
     agentCount: 0,
   };
 
+  if (
+    executionMode === "team" ||
+    executionMode === "council" ||
+    executionMode === "turbo"
+  ) {
+    const { data: logRow } = await supabase
+      .from("routing_logs")
+      .insert({
+        task_text: taskText,
+        chosen_target_entity_registry_id: executionChamberRegistryId,
+        all_candidates: internalChambers.map((c) => ({
+          entityRegistryId: c.id,
+          confidence: managerDecision.confidence,
+          reason: c.name,
+        })),
+        method: "llm-cheap",
+        agent_count: 0,
+        outcome: "unrated",
+        execution_mode: executionMode,
+        routing_action: managerDecision.action,
+        routing_matched_by: managerDecision.matchedBy,
+        routing_confidence: managerDecision.confidence,
+        routing_reasoning: managerDecision.reasoning,
+        routing_trace: managerDecision.trace,
+        delegated_building_id: buildingRegistryId,
+        delegated_chamber_id: managerDecision.delegatedChamberId ?? mainChamber.chamberRegistryId,
+      })
+      .select("id")
+      .single();
+    syntheticDecision.routingLogId = logRow?.id;
+  }
+
   if (executionMode === "team") {
     return executeTeamMode(taskText, syntheticDecision, {
       turbo: options?.turbo,
@@ -785,6 +763,12 @@ async function executeManagerTask(
   }
   if (executionMode === "council") {
     return executeCouncilMode(taskText, syntheticDecision, {
+      turbo: options?.turbo,
+      forceFailSlugs: options?.forceFailSlugs,
+    });
+  }
+  if (executionMode === "turbo") {
+    return executeTurboMode(taskText, syntheticDecision, {
       turbo: options?.turbo,
       forceFailSlugs: options?.forceFailSlugs,
     });
@@ -1880,6 +1864,16 @@ export async function executeChatTask(
   if (resolvedExecutionMode === "council") {
     return finish(
       await executeCouncilMode(
+        workingTaskText,
+        applyDirectTarget(result.decision, options?.directTargetEntityId),
+        options,
+      ),
+    );
+  }
+
+  if (resolvedExecutionMode === "turbo") {
+    return finish(
+      await executeTurboMode(
         workingTaskText,
         applyDirectTarget(result.decision, options?.directTargetEntityId),
         options,
