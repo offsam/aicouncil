@@ -1,5 +1,5 @@
-import { MissionControl } from "@/components/mission/MissionControl";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return <MissionControl />;
+  redirect("/workspace");
 }

@@ -329,16 +329,18 @@ async function main() {
   console.log("rule in context:", ruleInCtx, "| horizontal cable:", hasHorizontal);
   console.log("context excerpt:\n", ctxFinal.flattenedPrompt.slice(0, 600));
 
-  // Step 9: Ask agent (Mission Control payload shape)
-  console.log("\n[9] POST /api/ask-mistral with chamberRegistryId");
-  const askRes = await api("/api/ask-mistral", {
+  // Step 9: Direct agent chat via unified /api/chat
+  console.log("\n[9] POST /api/chat direct to mistral agent");
+  const askRes = await api("/api/chat", {
     method: "POST",
     body: JSON.stringify({
       question: "Say hello in one sentence.",
-      chamberRegistryId: chamberARegId,
+      sourceEntityId: chamberARegId,
+      targetAgentId: mistralReg.id,
+      executionMode: "fast",
     }),
   });
-  console.log("ask-mistral status:", askRes.status);
+  console.log("chat status:", askRes.status);
   const answer = (askRes.body.answer as string) || (askRes.body.error as string) || "";
   console.log("answer:", answer.slice(0, 300));
   if (askRes.status === 200 && answer) {
