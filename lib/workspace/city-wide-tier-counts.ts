@@ -58,16 +58,33 @@ export async function resolveCityWideTierCountsExcludingCityHall(
     throw new Error(roomsError.message);
   }
 
-  const officeRoomIds = new Set((officeRooms ?? []).map((row) => row.id));
-  if (officeRoomIds.size === 0) {
+  const officeRoomIds = (officeRooms ?? []).map((row) => row.id).filter(Boolean);
+  if (officeRoomIds.length === 0) {
+    return { tierCounts: emptyTierCounts(), excludedCityHallBuildingId };
+  }
+
+  const { data: chambers, error: chambersError } = await supabase
+    .from("chambers")
+    .select("id, building_entity_id, building_object_id")
+    .in("building_object_id", officeRoomIds);
+
+  if (chambersError) {
+    throw new Error(chambersError.message);
+  }
+
+  const eligibleChamberIds = (chambers ?? [])
+    .filter((chamber) => !isCityHallChamber(chamber, excludedCityHallBuildingId))
+    .map((chamber) => chamber.id)
+    .filter((id): id is string => Boolean(id));
+
+  if (eligibleChamberIds.length === 0) {
     return { tierCounts: emptyTierCounts(), excludedCityHallBuildingId };
   }
 
   const { data: assignments, error: assignError } = await supabase
     .from("agent_assignments")
-    .select(
-      "agents!inner(cost_tier), chambers!inner(building_entity_id, building_object_id)",
-    );
+    .select("agents!inner(cost_tier)")
+    .in("chamber_id", eligibleChamberIds);
 
   if (assignError) {
     throw new Error(assignError.message);
@@ -76,20 +93,9 @@ export async function resolveCityWideTierCountsExcludingCityHall(
   const tierCounts = emptyTierCounts();
 
   for (const row of assignments ?? []) {
-    const chamber = row.chambers as {
-      building_entity_id: string | null;
-      building_object_id: string | null;
-    };
-    const buildingObjectId = chamber.building_object_id;
-    if (!buildingObjectId || !officeRoomIds.has(buildingObjectId)) {
-      continue;
-    }
-    if (isCityHallChamber(chamber, excludedCityHallBuildingId)) {
-      continue;
-    }
-    const tier = normalizeCostTier(
-      (row.agents as { cost_tier?: string | null }).cost_tier,
-    );
+    const rawAgent = row.agents as { cost_tier?: string | null } | { cost_tier?: string | null }[];
+    const agent = Array.isArray(rawAgent) ? rawAgent[0] : rawAgent;
+    const tier = normalizeCostTier(agent?.cost_tier);
     tierCounts[tier] += 1;
   }
 
