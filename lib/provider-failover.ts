@@ -3,6 +3,13 @@ export type ProviderAttemptResult = {
   status: number;
   answer?: string;
   error?: string;
+  /** Provider usage payload as returned by the API (usage or usageMetadata). */
+  rawUsage?: unknown;
+};
+
+export type UsageLogMeta = {
+  purpose: string;
+  isFallback?: boolean;
 };
 
 export type CallWithModelFallbackOptions<T extends string> = {
@@ -12,6 +19,7 @@ export type CallWithModelFallbackOptions<T extends string> = {
   isRetryable: (status: number, message: string) => boolean;
   callOnce: (model: T) => Promise<ProviderAttemptResult>;
   onFallback?: (primary: T, used: T) => void;
+  usageLog?: UsageLogMeta;
 };
 
 export function candidateModels<T extends string>(
@@ -29,6 +37,16 @@ export function candidateModels<T extends string>(
   return out;
 }
 
+async function logUsage(
+  params: Parameters<
+    typeof import("./llm-usage-log").insertLlmUsageLog
+  >[0],
+): Promise<void> {
+  if (typeof window !== "undefined") return;
+  const { insertLlmUsageLog } = await import("./llm-usage-log");
+  await insertLlmUsageLog(params);
+}
+
 /**
  * Shared provider failover: try primary model, then each fallback in order.
  * Logs `[providerTag] auto-fallback primary=… → used=…` on switch.
@@ -37,10 +55,24 @@ export async function callWithModelFallback<T extends string>(
   opts: CallWithModelFallbackOptions<T>,
 ): Promise<{ answer: string; modelUsed: T }> {
   let lastError = `All ${opts.providerTag} models failed`;
+  const models = candidateModels(opts.primaryModel, opts.fallbackPool);
 
-  for (const model of candidateModels(opts.primaryModel, opts.fallbackPool)) {
+  for (let attemptIndex = 0; attemptIndex < models.length; attemptIndex++) {
+    const model = models[attemptIndex]!;
     const result = await opts.callOnce(model);
+
     if (result.ok && result.answer) {
+      if (opts.usageLog?.purpose) {
+        await logUsage({
+          provider: opts.providerTag,
+          modelId: model,
+          purpose: opts.usageLog.purpose,
+          rawUsage: result.rawUsage ?? null,
+          isRetry: attemptIndex > 0,
+          isFallback: opts.usageLog.isFallback ?? false,
+          attemptIndex,
+        });
+      }
       if (model !== opts.primaryModel) {
         console.info(
           `[${opts.providerTag}] auto-fallback primary=${opts.primaryModel} → used=${model}`,
@@ -48,6 +80,19 @@ export async function callWithModelFallback<T extends string>(
         opts.onFallback?.(opts.primaryModel, model);
       }
       return { answer: result.answer, modelUsed: model };
+    }
+
+    if (result.rawUsage != null) {
+      await logUsage({
+        provider: opts.providerTag,
+        modelId: model,
+        purpose: opts.usageLog?.purpose ?? "unknown",
+        rawUsage: result.rawUsage,
+        error: result.error ?? lastError,
+        isRetry: attemptIndex > 0,
+        isFallback: opts.usageLog?.isFallback ?? false,
+        attemptIndex,
+      });
     }
 
     lastError = result.error ?? lastError;

@@ -1,6 +1,7 @@
 import { parseAnthropicError } from "./api-types";
-import { callWithModelFallback } from "./provider-failover";
+import { callWithModelFallback, type UsageLogMeta } from "./provider-failover";
 import { recordProviderFailure, recordProviderSuccess } from "./provider-failover-status";
+import { extractRawUsage } from "./tokens";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
@@ -25,7 +26,7 @@ async function callAnthropicOnce(
   model: string,
   prompt: string,
   opts: AnthropicCallOpts = {},
-): Promise<{ ok: boolean; status: number; answer?: string; error?: string }> {
+): Promise<{ ok: boolean; status: number; answer?: string; error?: string; rawUsage?: unknown }> {
   const body: Record<string, unknown> = {
     model,
     max_tokens: opts.maxTokens ?? 2048,
@@ -49,11 +50,13 @@ async function callAnthropicOnce(
   });
 
   const data = await response.json();
+  const rawUsage = extractRawUsage("anthropic", data);
   if (!response.ok) {
     return {
       ok: false,
       status: response.status,
       error: parseAnthropicError(response.status, data),
+      rawUsage,
     };
   }
 
@@ -62,20 +65,22 @@ async function callAnthropicOnce(
   ).content?.find((block) => block.type === "text");
   const answer = textBlock?.text?.trim();
   if (!answer) {
-    return { ok: false, status: 502, error: "Anthropic returned empty answer" };
+    return { ok: false, status: 502, error: "Anthropic returned empty answer", rawUsage };
   }
 
-  return { ok: true, status: response.status, answer };
+  return { ok: true, status: response.status, answer, rawUsage };
 }
 
 /** Try primary Anthropic model, then ANTHROPIC_FALLBACK_POOL. */
 export async function callAnthropicWithFallback(
   primaryModel: string,
   prompt: string,
-  opts?: AnthropicCallOpts,
+  opts?: AnthropicCallOpts & { usageLog?: UsageLogMeta },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY missing");
+
+  const { usageLog, ...callOpts } = opts ?? {};
 
   try {
     const result = await callWithModelFallback({
@@ -83,7 +88,8 @@ export async function callAnthropicWithFallback(
       primaryModel,
       fallbackPool: ANTHROPIC_FALLBACK_POOL,
       isRetryable: isRetryableAnthropicFailure,
-      callOnce: (model) => callAnthropicOnce(apiKey, model, prompt, opts),
+      callOnce: (model) => callAnthropicOnce(apiKey, model, prompt, callOpts),
+      usageLog,
     });
     recordProviderSuccess("anthropic", primaryModel, result.modelUsed);
     return result;

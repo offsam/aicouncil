@@ -1,5 +1,7 @@
-import { callWithModelFallback } from "./provider-failover";
+import { callWithModelFallback, type UsageLogMeta } from "./provider-failover";
+import { insertLlmUsageLog } from "./llm-usage-log";
 import { recordProviderFailure, recordProviderSuccess } from "./provider-failover-status";
+import { extractRawUsage } from "./tokens";
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -55,7 +57,7 @@ async function callGroqOnce(
   model: string,
   messages: GroqMessage[],
   opts: GroqCallOpts = {},
-): Promise<{ ok: boolean; status: number; answer?: string; error?: string }> {
+): Promise<{ ok: boolean; status: number; answer?: string; error?: string; rawUsage?: unknown }> {
   const maxTokens = opts.maxTokens ?? 2048;
   const body: Record<string, unknown> = {
     model,
@@ -81,13 +83,17 @@ async function callGroqOnce(
   const data = (await response.json()) as {
     choices?: Array<{ message?: { content?: string | null } }>;
     error?: { message?: string };
+    usage?: unknown;
   };
+
+  const rawUsage = extractRawUsage("groq", data);
 
   if (!response.ok) {
     return {
       ok: false,
       status: response.status,
       error: data.error?.message || `Groq error ${response.status}`,
+      rawUsage,
     };
   }
 
@@ -97,10 +103,11 @@ async function callGroqOnce(
       ok: false,
       status: 502,
       error: "Groq returned empty answer",
+      rawUsage,
     };
   }
 
-  return { ok: true, status: response.status, answer };
+  return { ok: true, status: response.status, answer, rawUsage };
 }
 
 /**
@@ -109,10 +116,12 @@ async function callGroqOnce(
 export async function callGroqWithFallback(
   primaryModel: string,
   messages: GroqMessage[],
-  opts?: GroqCallOpts,
+  opts?: GroqCallOpts & { usageLog?: UsageLogMeta },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY missing");
+
+  const { usageLog, ...callOpts } = opts ?? {};
 
   try {
     const result = await callWithModelFallback({
@@ -120,7 +129,8 @@ export async function callGroqWithFallback(
       primaryModel,
       fallbackPool: GROQ_FALLBACK_POOL,
       isRetryable: isRetryableGroqFailure,
-      callOnce: (model) => callGroqOnce(apiKey, model, messages, opts),
+      callOnce: (model) => callGroqOnce(apiKey, model, messages, callOpts),
+      usageLog,
     });
     recordProviderSuccess("groq", primaryModel, result.modelUsed);
     return result;
@@ -141,7 +151,7 @@ export async function callGroqWithFallback(
 export async function callGroqConfiguredModel(
   model: string,
   messages: GroqMessage[],
-  opts?: { maxTokens?: number },
+  opts?: { maxTokens?: number; usagePurpose?: string; usageIsFallback?: boolean },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -152,6 +162,15 @@ export async function callGroqConfiguredModel(
   if (!result.ok) {
     recordProviderFailure("groq", model, result.error ?? "Groq failed");
     throw new Error(result.error ?? `Groq error ${result.status}`);
+  }
+  if (opts?.usagePurpose) {
+    await insertLlmUsageLog({
+      provider: "groq",
+      modelId: model,
+      purpose: opts.usagePurpose,
+      rawUsage: result.rawUsage ?? null,
+      isFallback: opts.usageIsFallback ?? false,
+    });
   }
   recordProviderSuccess("groq", model, model);
   return { answer: result.answer!, modelUsed: model };

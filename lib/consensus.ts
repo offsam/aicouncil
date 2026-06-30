@@ -1,5 +1,6 @@
 import type { AnalysisReport, ConsensusRequestBody } from "./api-types";
 import { anthropicUsage } from "./tokens";
+import { insertLlmUsageLog } from "./llm-usage-log";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -132,5 +133,12 @@ export async function runConsensusAnalysis(
   }
 
   const report = parseReport(raw) ?? fallbackReport(raw);
-  return { report, usage: anthropicUsage(data) };
+  const usage = anthropicUsage(data);
+  await insertLlmUsageLog({
+    provider: "anthropic",
+    modelId: MODEL,
+    purpose: "consensus_analysis",
+    rawUsage: (data as { usage?: unknown }).usage ?? null,
+  });
+  return { report, usage };
 }

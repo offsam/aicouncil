@@ -73,3 +73,53 @@ export function sumTokens(
     { input: 0, output: 0, total: 0 },
   );
 }
+
+/** OpenAI-compatible usage block (OpenAI, Groq, DeepSeek, OpenRouter). */
+export function openAICompatibleUsage(data: unknown): TokenUsage | undefined {
+  const usage = (
+    data as {
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+    }
+  ).usage;
+  if (!usage) return undefined;
+  const input = usage.prompt_tokens ?? usage.input_tokens ?? 0;
+  const output = usage.completion_tokens ?? usage.output_tokens ?? 0;
+  return {
+    input,
+    output,
+    total: usage.total_tokens ?? input + output,
+  };
+}
+
+export function extractRawUsage(provider: string, data: unknown): unknown {
+  if (data == null || typeof data !== "object") return null;
+  const p = provider.toLowerCase();
+  if (p === "anthropic") {
+    return (data as { usage?: unknown }).usage ?? null;
+  }
+  if (p === "google" || p === "gemini") {
+    return (data as { usageMetadata?: unknown }).usageMetadata ?? null;
+  }
+  return (data as { usage?: unknown }).usage ?? null;
+}
+
+export function normalizeProviderUsage(
+  provider: string,
+  rawUsage: unknown,
+): TokenUsage | null {
+  if (rawUsage == null) return null;
+  const p = provider.toLowerCase();
+  if (p === "anthropic") {
+    return anthropicUsage({ usage: rawUsage }) ?? null;
+  }
+  if (p === "google" || p === "gemini") {
+    return geminiUsage({ usageMetadata: rawUsage }) ?? null;
+  }
+  return openAICompatibleUsage({ usage: rawUsage }) ?? null;
+}

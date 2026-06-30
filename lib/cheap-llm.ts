@@ -2,6 +2,7 @@ import { callAnthropicWithFallback } from "./anthropic-models";
 import { callGroqWithFallback } from "./groq-models";
 import { callGeminiWithFallback } from "./gemini-models";
 import { callOpenAIWithFallback } from "./openai-models";
+import type { UsageLogMeta } from "./provider-failover";
 import {
   defaultHardcodedRoleConfig,
   loadSystemLlmRoleConfig,
@@ -25,6 +26,7 @@ async function invokeConfiguredProvider(
   provider: SystemLlmProvider,
   model: string,
   params: Pick<InvokeCheapLLMParams, "prompt" | "responseFormat" | "temperature" | "maxTokens">,
+  usageLog?: UsageLogMeta,
 ): Promise<{ answer: string; modelUsed: string }> {
   const { prompt, responseFormat = "text", temperature = 0.1, maxTokens } = params;
   if (provider === "groq") {
@@ -32,12 +34,14 @@ async function invokeConfiguredProvider(
       maxTokens,
       temperature,
       responseFormat,
+      usageLog,
     });
   }
   if (provider === "anthropic") {
     return callAnthropicWithFallback(model, prompt, {
       maxTokens,
       temperature,
+      usageLog,
     });
   }
   if (provider === "openai") {
@@ -45,12 +49,14 @@ async function invokeConfiguredProvider(
       maxTokens,
       temperature,
       responseFormat,
+      usageLog,
     });
   }
   return callGeminiWithFallback(model, {
     parts: [{ text: prompt }],
     maxOutputTokens: maxTokens,
     temperature,
+    usageLog,
   });
 }
 
@@ -101,12 +107,17 @@ export async function invokeCheapLLMSlot(
   const provider = slot === "primary" ? config.primaryProvider : config.fallbackProvider;
   const model = slot === "primary" ? config.primaryModel : config.fallbackModel;
 
-  const { answer, modelUsed } = await invokeConfiguredProvider(provider, model, {
-    prompt,
-    responseFormat,
-    temperature,
-    maxTokens,
-  });
+  const { answer, modelUsed } = await invokeConfiguredProvider(
+    provider,
+    model,
+    {
+      prompt,
+      responseFormat,
+      temperature,
+      maxTokens,
+    },
+    { purpose, isFallback: slot === "fallback" },
+  );
   console.info(
     `[invokeCheapLLM] purpose=${purpose} role=${roleTag} slot=${slot} provider=${provider} model=${modelUsed}`,
   );

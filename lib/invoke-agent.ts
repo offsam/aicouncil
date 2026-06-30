@@ -23,6 +23,9 @@ export type InvokeAgentParams = {
   maxTokens?: number;
   /** Prior user/assistant turns in the same conversation (Mayor memory). */
   conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+  /** llm_usage_logs.purpose */
+  usagePurpose?: string;
+  usageIsFallback?: boolean;
 };
 
 /**
@@ -61,6 +64,8 @@ export async function invokeAgentForWorkflow(params: InvokeAgentParams): Promise
     question: params.question,
     maxTokens: params.maxTokens,
     conversationHistory: params.conversationHistory,
+    usagePurpose: params.usagePurpose ?? "agent_invoke",
+    usageIsFallback: params.usageIsFallback,
   });
 }
 

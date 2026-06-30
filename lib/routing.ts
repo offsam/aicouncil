@@ -3,6 +3,8 @@ import type { RouteCandidate, RouteDecision, RoutingScoreDetail, MayorRoutingDec
 import { mayorRoutingLogAction } from "./mayor-routing";
 import type { ExecutionMode } from "./execution-mode";
 import { invokeCheapLLM } from "./cheap-llm";
+import { insertLlmUsageLog } from "./llm-usage-log";
+import { extractRawUsage } from "./tokens";
 
 const GENERAL_INTAKE_ID = "c0000000-0000-4000-8000-000000000000";
 const CITY_ID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
@@ -62,9 +64,26 @@ async function callClaudeRouter(prompt: string): Promise<string> {
   });
 
   const data = await response.json();
+  const rawUsage = extractRawUsage("anthropic", data);
   if (!response.ok) {
+    if (rawUsage != null) {
+      await insertLlmUsageLog({
+        provider: "anthropic",
+        modelId: "claude-3-5-sonnet-latest",
+        purpose: "claude_router",
+        rawUsage,
+        error: data.error?.message || `Claude API returned status ${response.status}`,
+      });
+    }
     throw new Error(data.error?.message || `Claude API returned status ${response.status}`);
   }
+
+  await insertLlmUsageLog({
+    provider: "anthropic",
+    modelId: "claude-3-5-sonnet-latest",
+    purpose: "claude_router",
+    rawUsage: rawUsage ?? null,
+  });
 
   const content = data.content?.[0]?.text;
   if (!content) throw new Error("Claude returned empty response");

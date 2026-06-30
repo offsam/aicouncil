@@ -1,6 +1,8 @@
 import type { AgentDefinition } from "./agents";
-import { callWithModelFallback } from "./provider-failover";
+import { callWithModelFallback, type UsageLogMeta } from "./provider-failover";
+import { insertLlmUsageLog } from "./llm-usage-log";
 import { recordProviderFailure, recordProviderSuccess } from "./provider-failover-status";
+import { extractRawUsage } from "./tokens";
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -111,7 +113,8 @@ async function callOpenRouterOnce(
   apiKey: string,
   model: string,
   messages: ChatMessage[],
-): Promise<{ ok: boolean; status: number; answer?: string; error?: string }> {
+  maxTokens = 2048,
+): Promise<{ ok: boolean; status: number; answer?: string; error?: string; rawUsage?: unknown }> {
   const response = await fetch(OPENROUTER_CHAT_URL, {
     method: "POST",
     headers: {
@@ -122,7 +125,7 @@ async function callOpenRouterOnce(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 2048,
+      max_tokens: maxTokens,
       messages,
     }),
   });
@@ -130,13 +133,17 @@ async function callOpenRouterOnce(
   const data = (await response.json()) as {
     choices?: Array<{ message?: { content?: string | null; reasoning?: string | null } }>;
     error?: { message?: string };
+    usage?: unknown;
   };
+
+  const rawUsage = extractRawUsage("openrouter", data);
 
   if (!response.ok) {
     return {
       ok: false,
       status: response.status,
       error: data.error?.message || `OpenRouter error ${response.status}`,
+      rawUsage,
     };
   }
 
@@ -146,10 +153,11 @@ async function callOpenRouterOnce(
       ok: false,
       status: 502,
       error: "OpenRouter returned empty answer",
+      rawUsage,
     };
   }
 
-  return { ok: true, status: response.status, answer };
+  return { ok: true, status: response.status, answer, rawUsage };
 }
 
 /**
@@ -158,9 +166,12 @@ async function callOpenRouterOnce(
 export async function callOpenRouterWithFallback(
   primaryModel: string,
   messages: ChatMessage[],
+  opts?: { usageLog?: UsageLogMeta; maxTokens?: number },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
+
+  const maxTokens = opts?.maxTokens ?? 2048;
 
   try {
     const result = await callWithModelFallback({
@@ -168,7 +179,8 @@ export async function callOpenRouterWithFallback(
       primaryModel,
       fallbackPool: OPENROUTER_FREE_FALLBACK_POOL,
       isRetryable: isRetryableOpenRouterFailure,
-      callOnce: (model) => callOpenRouterOnce(apiKey, model, messages),
+      callOnce: (model) => callOpenRouterOnce(apiKey, model, messages, maxTokens),
+      usageLog: opts?.usageLog,
     });
     recordProviderSuccess("openrouter", primaryModel, result.modelUsed);
     return result;
@@ -186,15 +198,34 @@ export async function callOpenRouterWithFallback(
 export async function callOpenRouterConfiguredModel(
   model: string,
   messages: ChatMessage[],
-  opts?: { maxTokens?: number },
+  opts?: { maxTokens?: number; usagePurpose?: string; usageIsFallback?: boolean },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY missing");
 
-  const result = await callOpenRouterOnce(apiKey, model, messages);
+  const result = await callOpenRouterOnce(apiKey, model, messages, opts?.maxTokens ?? 2048);
   if (!result.ok) {
+    if (result.rawUsage != null) {
+      await insertLlmUsageLog({
+        provider: "openrouter",
+        modelId: model,
+        purpose: opts?.usagePurpose ?? "agent_invoke",
+        rawUsage: result.rawUsage,
+        error: result.error ?? "OpenRouter failed",
+        isFallback: opts?.usageIsFallback ?? false,
+      });
+    }
     recordProviderFailure("openrouter", model, result.error ?? "OpenRouter failed");
     throw new Error(result.error ?? `OpenRouter error ${result.status}`);
+  }
+  if (opts?.usagePurpose) {
+    await insertLlmUsageLog({
+      provider: "openrouter",
+      modelId: model,
+      purpose: opts.usagePurpose,
+      rawUsage: result.rawUsage ?? null,
+      isFallback: opts.usageIsFallback ?? false,
+    });
   }
   recordProviderSuccess("openrouter", model, model);
   return { answer: result.answer!, modelUsed: model };

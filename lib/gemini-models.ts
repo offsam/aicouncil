@@ -1,5 +1,7 @@
-import { callWithModelFallback } from "./provider-failover";
+import { callWithModelFallback, type UsageLogMeta } from "./provider-failover";
+import { insertLlmUsageLog } from "./llm-usage-log";
 import { recordProviderFailure, recordProviderSuccess } from "./provider-failover-status";
+import { extractRawUsage } from "./tokens";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -52,7 +54,7 @@ async function callGeminiOnce(
   apiKey: string,
   model: string,
   body: GeminiRequestBody,
-): Promise<{ ok: boolean; status: number; answer?: string; error?: string }> {
+): Promise<{ ok: boolean; status: number; answer?: string; error?: string; rawUsage?: unknown }> {
   const response = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
     method: "POST",
     headers: {
@@ -65,13 +67,17 @@ async function callGeminiOnce(
   const data = (await response.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
     error?: { message?: string };
+    usageMetadata?: unknown;
   };
+
+  const rawUsage = extractRawUsage("gemini", data);
 
   if (!response.ok) {
     return {
       ok: false,
       status: response.status,
       error: data.error?.message || `Gemini error ${response.status}`,
+      rawUsage,
     };
   }
 
@@ -81,10 +87,11 @@ async function callGeminiOnce(
       ok: false,
       status: 502,
       error: "Gemini returned empty answer",
+      rawUsage,
     };
   }
 
-  return { ok: true, status: response.status, answer };
+  return { ok: true, status: response.status, answer, rawUsage };
 }
 
 /**
@@ -92,23 +99,25 @@ async function callGeminiOnce(
  */
 export async function callGeminiWithFallback(
   primaryModel: string,
-  opts: GeminiCallOpts,
+  opts: GeminiCallOpts & { usageLog?: UsageLogMeta },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_API_KEY missing");
 
+  const { usageLog, ...callOpts } = opts;
+
   const generationConfig: GeminiRequestBody["generationConfig"] = {
-    maxOutputTokens: opts.maxOutputTokens ?? 2048,
+    maxOutputTokens: callOpts.maxOutputTokens ?? 2048,
   };
-  if (opts.temperature !== undefined) {
-    generationConfig.temperature = opts.temperature;
+  if (callOpts.temperature !== undefined) {
+    generationConfig.temperature = callOpts.temperature;
   }
 
   const body: GeminiRequestBody = {
-    contents: [{ parts: opts.parts }],
+    contents: [{ parts: callOpts.parts }],
     generationConfig,
-    ...(opts.systemPrompt
-      ? { systemInstruction: { parts: [{ text: opts.systemPrompt }] } }
+    ...(callOpts.systemPrompt
+      ? { systemInstruction: { parts: [{ text: callOpts.systemPrompt }] } }
       : {}),
   };
 
@@ -119,6 +128,7 @@ export async function callGeminiWithFallback(
       fallbackPool: GEMINI_FALLBACK_POOL,
       isRetryable: isRetryableGeminiFailure,
       callOnce: (model) => callGeminiOnce(apiKey, model, body),
+      usageLog,
     });
     recordProviderSuccess("gemini", primaryModel, result.modelUsed);
     return result;
@@ -139,6 +149,8 @@ export async function callGeminiConfiguredModel(
     parts: GeminiPart[];
     systemPrompt?: string;
     maxTokens?: number;
+    usagePurpose?: string;
+    usageIsFallback?: boolean;
   },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.GOOGLE_API_KEY;
@@ -156,6 +168,15 @@ export async function callGeminiConfiguredModel(
   if (!result.ok) {
     recordProviderFailure("gemini", model, result.error ?? "Gemini failed");
     throw new Error(result.error ?? `Gemini error ${result.status}`);
+  }
+  if (opts.usagePurpose) {
+    await insertLlmUsageLog({
+      provider: "gemini",
+      modelId: model,
+      purpose: opts.usagePurpose,
+      rawUsage: result.rawUsage ?? null,
+      isFallback: opts.usageIsFallback ?? false,
+    });
   }
   recordProviderSuccess("gemini", model, model);
   return { answer: result.answer!, modelUsed: model };
