@@ -14,7 +14,6 @@ import { KNOWLEDGE_FILE_ACCEPT } from "@/lib/knowledge/prepare-knowledge-file";
 import { classifyKnowledgeFile } from "@/lib/knowledge/knowledge-media-types";
 import { ChatMessageAttachments } from "./ChatMessageAttachments";
 import { DebateTierPicker } from "./DebateTierPicker";
-import { mayorExecutionEligibility } from "@/lib/workspace/mayor-execution-eligibility";
 import { useWorkspaceExecutionMode } from "./WorkspaceExecutionModeContext";
 import { useWorkspaceRoute } from "./WorkspaceRouteContext";
 import { useWorkspaceSelection } from "./WorkspaceSelectionContext";
@@ -231,6 +230,10 @@ export function WorkspaceMayorChat() {
   const [debateTierCounts, setDebateTierCounts] = useState<Record<CostTier, number> | null>(
     null,
   );
+  const [mayorModeEligibility, setMayorModeEligibility] = useState<{
+    teamEligible: boolean;
+    councilEligible: boolean;
+  } | null>(null);
   const [debateConfigured, setDebateConfigured] = useState(false);
   const [debatePickerOpen, setDebatePickerOpen] = useState(false);
   const [pendingDebateText, setPendingDebateText] = useState("");
@@ -300,7 +303,9 @@ export function WorkspaceMayorChat() {
   }, [dockOpen, messages.length, setExpanded]);
 
   const mayorEligibility =
-    target.kind === "mayor" ? mayorExecutionEligibility(debateTierCounts) : null;
+    target.kind === "mayor"
+      ? (mayorModeEligibility ?? { teamEligible: true, councilEligible: true })
+      : null;
   const teamDisabled = mayorEligibility
     ? !mayorEligibility.teamEligible
     : !teamRosterEligible;
@@ -322,6 +327,8 @@ export function WorkspaceMayorChat() {
           configured?: boolean;
           debateConfigured?: boolean;
           tierCounts?: Record<CostTier, number>;
+          teamEligible?: boolean;
+          councilEligible?: boolean;
           debateChambersByTier?: CityHallDebateChambersByTier;
         } & Partial<CityHallOrchestrator>) => {
           if (cancelled) return;
@@ -338,6 +345,15 @@ export function WorkspaceMayorChat() {
           }
           if (data.tierCounts) {
             setDebateTierCounts(data.tierCounts);
+          }
+          if (
+            typeof data.teamEligible === "boolean" &&
+            typeof data.councilEligible === "boolean"
+          ) {
+            setMayorModeEligibility({
+              teamEligible: data.teamEligible,
+              councilEligible: data.councilEligible,
+            });
           }
           setDebateConfigured(Boolean(data.debateConfigured));
         },

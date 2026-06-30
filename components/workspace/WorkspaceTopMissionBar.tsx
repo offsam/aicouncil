@@ -11,8 +11,6 @@ import { useWorkspaceLocale } from "./WorkspaceLocaleContext";
 import { useWorkspaceRoute } from "./WorkspaceRouteContext";
 import { useWorkspaceSelection } from "./WorkspaceSelectionContext";
 import { useWorkspaceChat } from "./WorkspaceChatContext";
-import type { CostTier } from "@/lib/cost-tier";
-import { mayorExecutionEligibility } from "@/lib/workspace/mayor-execution-eligibility";
 import type { WorkspaceLocale } from "@/lib/workspace/i18n/messages";
 import { WORKSPACE_MESSAGES } from "@/lib/workspace/i18n/messages";
 
@@ -79,11 +77,15 @@ export function WorkspaceTopMissionBar() {
   const [activeTasks, setActiveTasks] = useState(0);
   const [adminOpen, setAdminOpen] = useState(false);
   const adminRef = useRef<HTMLDivElement>(null);
-  const [mayorTierCounts, setMayorTierCounts] = useState<Record<CostTier, number> | null>(
-    null,
-  );
+  const [mayorEligibilityState, setMayorEligibilityState] = useState<{
+    teamEligible: boolean;
+    councilEligible: boolean;
+  } | null>(null);
 
-  const mayorEligibility = mayorExecutionEligibility(mayorTierCounts);
+  const mayorEligibility = mayorEligibilityState ?? {
+    teamEligible: true,
+    councilEligible: true,
+  };
 
   const officeId = snapshot?.officeId ?? null;
   const projectName = snapshot?.cityName ?? "AI Council";
@@ -111,8 +113,22 @@ export function WorkspaceTopMissionBar() {
     let cancelled = false;
     fetch("/api/workspace/city-hall-orchestrator")
       .then((r) => r.json())
-      .then((data: { tierCounts?: Record<CostTier, number> }) => {
-        if (!cancelled && data.tierCounts) setMayorTierCounts(data.tierCounts);
+      .then(
+        (data: {
+          teamEligible?: boolean;
+          councilEligible?: boolean;
+        }) => {
+        if (!cancelled) {
+          if (
+            typeof data.teamEligible === "boolean" &&
+            typeof data.councilEligible === "boolean"
+          ) {
+            setMayorEligibilityState({
+              teamEligible: data.teamEligible,
+              councilEligible: data.councilEligible,
+            });
+          }
+        }
       })
       .catch(() => {});
     return () => {
