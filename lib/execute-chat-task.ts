@@ -55,6 +55,7 @@ import { sanitizeUserFacingText, toUserFacingProviderError } from "./provider-us
 import { assertAgentContextAccess } from "./security/agent-context-access";
 import { buildManagerSummaryPrompt } from "./agent-persona";
 import { invokeCheapLLM } from "./cheap-llm";
+import { runWithLlmUsageContext } from "./llm-usage-context";
 import { isMayorAgent as isMayorAgentByGraph } from "./workspace/graph-identity";
 import {
   requireExternalEntryOfficeId,
@@ -1272,6 +1273,29 @@ async function buildMayorClarificationResult(params: {
   };
 }
 
+/** Mayor path LLM usage: conversation + execution mode for llm_usage_logs attribution. */
+async function executeMayorTaskWithUsageContext(
+  taskText: string,
+  mayorAgentId: string,
+  mayorChamberRegistryId: string,
+  options?: {
+    turbo?: boolean;
+    executionMode?: ExecutionMode;
+    forceFailSlugs?: string[];
+    forceMayorInvokeError?: boolean;
+    conversationId?: string;
+    officeId?: string;
+  },
+): Promise<ExecuteChatTaskResult> {
+  return runWithLlmUsageContext(
+    {
+      conversationId: options?.conversationId ?? null,
+      executionMode: options?.executionMode ?? "fast",
+    },
+    () => executeMayorTask(taskText, mayorAgentId, mayorChamberRegistryId, options),
+  );
+}
+
 async function executeMayorTask(
   taskText: string,
   mayorAgentId: string,
@@ -1382,6 +1406,7 @@ async function executeMayorTask(
         forceError: options?.forceMayorInvokeError,
         maxTokens: 4096,
         conversationHistory: modelHistory,
+        usagePurpose: "mayor_answer",
       });
 
       governmentFallback = invoked.governmentFallback;
@@ -1736,7 +1761,7 @@ export async function executeChatTask(
     const isMayor = mayorResult?.value === true;
     if (isMayor) {
       return finish(
-        await executeMayorTask(workingTaskText, options.targetAgentId, chamberId, {
+        await executeMayorTaskWithUsageContext(workingTaskText, options.targetAgentId, chamberId, {
           turbo: options?.turbo,
           executionMode: resolvedExecutionMode,
           forceFailSlugs: options?.forceFailSlugs,
@@ -1765,7 +1790,7 @@ export async function executeChatTask(
         ));
       if (!explicitManagerEntry) {
         return finish(
-          await executeMayorTask(workingTaskText, mayor.agentId, mayor.chamberRegistryId, {
+          await executeMayorTaskWithUsageContext(workingTaskText, mayor.agentId, mayor.chamberRegistryId, {
             turbo: options?.turbo,
             executionMode: resolvedExecutionMode,
             forceFailSlugs: options?.forceFailSlugs,
