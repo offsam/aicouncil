@@ -376,7 +376,11 @@ export async function invokeMayorWithGitHubTools(params: {
     console.error("[mayor-github] unhandled error", {
       message: error instanceof Error ? error.message : String(error),
     });
-    const message = error instanceof Error ? error.message : "unknown error";
-    return `GitHub tool error: ${message}. Check server logs.`;
+    const errorMessage = error instanceof Error ? error.message : "unknown error";
+    return (
+      "Не смог проверить GitHub код. Причина: " +
+      errorMessage +
+      ". Проверь Vercel logs по prefix [mayor-github]."
+    );
   }
 }
