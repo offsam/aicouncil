@@ -322,7 +322,7 @@ export function WorkspaceMayorChat() {
   useEffect(() => {
     if (teamDisabled && executionMode === "team") setExecutionMode("fast");
     if (councilDisabled && executionMode === "council") setExecutionMode("fast");
-    if (turboDisabled && executionMode === "turbo") setExecutionMode("fast");
+    if (turboDisabled && (executionMode as string) === "turbo") setExecutionMode("fast");
   }, [teamDisabled, councilDisabled, turboDisabled, executionMode, setExecutionMode]);
 
   useEffect(() => {
@@ -933,16 +933,17 @@ export function WorkspaceMayorChat() {
                 aria-label="Режим выполнения"
               >
                 {EXECUTION_MODE_OPTIONS.map((option) => {
+                  const optionId = option.id as string;
                   const disabled =
-                    (option.id === "team" && teamDisabled) ||
-                    (option.id === "council" && councilDisabled) ||
-                    (option.id === "turbo" && turboDisabled);
+                    (optionId === "team" && teamDisabled) ||
+                    (optionId === "council" && councilDisabled) ||
+                    (optionId === "turbo" && turboDisabled);
                   const disabledReason =
-                    option.id === "team" && teamDisabled
+                    optionId === "team" && teamDisabled
                       ? "Нет cheap-агентов в городе (вне City Hall)"
-                      : option.id === "council" && councilDisabled
+                      : optionId === "council" && councilDisabled
                         ? "Нет mid-агентов в городе (вне City Hall)"
-                        : option.id === "turbo" && turboDisabled
+                        : optionId === "turbo" && turboDisabled
                           ? "Нет premium-агентов в городе (вне City Hall)"
                           : undefined;
                   return (
