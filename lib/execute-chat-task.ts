@@ -50,6 +50,7 @@ import {
   loadMayorConversationHistory,
   mayorClarifyAllowed,
   mayorConversationTurnsForModel,
+  trimMayorConversationTurnsForPrompt,
   type MayorConversationMessageKind,
 } from "./mayor-conversation-memory";
 import { sanitizeUserFacingText, toUserFacingProviderError } from "./provider-user-error";
@@ -1328,7 +1329,9 @@ async function executeMayorTask(
     : [];
   const clarifyAllowed =
     Boolean(options?.conversationId) && mayorClarifyAllowed(conversationHistory);
-  const modelHistory = mayorConversationTurnsForModel(conversationHistory);
+  const modelHistory = trimMayorConversationTurnsForPrompt(
+    mayorConversationTurnsForModel(conversationHistory),
+  );
 
   const anaphoraResult = await resolveStructureCommandAnaphora(taskText, modelHistory, { officeId });
 

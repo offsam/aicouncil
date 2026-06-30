@@ -3,6 +3,11 @@ import { getSupabaseAdmin } from "./supabase/admin";
 /** Max stored turns (user + assistant pairs); oldest trimmed after insert. */
 export const MAYOR_CONVERSATION_MAX_MESSAGES = 40;
 
+/** Max estimated tokens passed to Mayor LLM prompt (DB storage unchanged). MAYOR-COST-1B */
+export const MAYOR_PROMPT_HISTORY_MAX_EST_TOKENS = 1200;
+
+const MAYOR_PROMPT_HISTORY_CHARS_PER_TOKEN = 4;
+
 export type MayorConversationMessageKind = "answer" | "clarify";
 
 export type MayorConversationMessage = {
@@ -74,6 +79,49 @@ export function mayorConversationTurnsForModel(
   history: MayorConversationMessage[],
 ): MayorConversationTurn[] {
   return history.map(({ role, content }) => ({ role, content }));
+}
+
+function estimateMayorHistoryChars(turns: MayorConversationTurn[]): number {
+  return turns.reduce((sum, turn) => sum + turn.content.length + turn.role.length + 2, 0);
+}
+
+export function estimateMayorHistoryTokens(turns: MayorConversationTurn[]): number {
+  return Math.ceil(estimateMayorHistoryChars(turns) / MAYOR_PROMPT_HISTORY_CHARS_PER_TOKEN);
+}
+
+/** Index of the last user message — that user/assistant suffix is never split. */
+function lastUserAssistantPairStart(turns: MayorConversationTurn[]): number {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === "user") return i;
+  }
+  return turns.length;
+}
+
+/**
+ * Trim oldest whole messages when prompt history exceeds ~1200 est. tokens.
+ * Does not mutate DB — apply only when building the LLM prompt (MAYOR-COST-1B).
+ */
+export function trimMayorConversationTurnsForPrompt(
+  turns: MayorConversationTurn[],
+  maxEstTokens: number = MAYOR_PROMPT_HISTORY_MAX_EST_TOKENS,
+): MayorConversationTurn[] {
+  if (turns.length === 0 || estimateMayorHistoryTokens(turns) <= maxEstTokens) {
+    return turns;
+  }
+
+  const pairStart = lastUserAssistantPairStart(turns);
+  const protectedSuffix = turns.slice(pairStart);
+  let removablePrefix = turns.slice(0, pairStart);
+
+  while (removablePrefix.length > 0) {
+    const candidate = [...removablePrefix, ...protectedSuffix];
+    if (estimateMayorHistoryTokens(candidate) <= maxEstTokens) {
+      return candidate;
+    }
+    removablePrefix = removablePrefix.slice(1);
+  }
+
+  return protectedSuffix;
 }
 
 export async function appendMayorConversationTurn(
