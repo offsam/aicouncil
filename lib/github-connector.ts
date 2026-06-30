@@ -169,10 +169,20 @@ export async function searchCode(
   }));
 }
 
+function parseGithubRepoEnv(): { owner: string; repo: string } | null {
+  const repoFull = process.env.GITHUB_REPO?.trim() || "";
+  if (!repoFull.includes("/")) return null;
+  const slash = repoFull.indexOf("/");
+  const owner = repoFull.slice(0, slash).trim();
+  const repo = repoFull.slice(slash + 1).trim();
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
 export function defaultGithubOwner(): string {
-  return process.env.GITHUB_DEFAULT_OWNER?.trim() ?? "";
+  return process.env.GITHUB_DEFAULT_OWNER?.trim() || parseGithubRepoEnv()?.owner || "";
 }
 
 export function defaultGithubRepo(): string {
-  return process.env.GITHUB_DEFAULT_REPO?.trim() ?? "";
+  return process.env.GITHUB_DEFAULT_REPO?.trim() || parseGithubRepoEnv()?.repo || "";
 }
