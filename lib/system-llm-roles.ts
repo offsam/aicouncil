@@ -28,6 +28,7 @@ const PURPOSE_TO_ROLE: Record<string, SystemLlmRole> = {
   "structure-anaphora-expand": "router",
   "manager-summary": "summary",
   "chamber-archive-summary": "summary",
+  summary: "summary",
   "tech-structure-plan": "planner",
   "tech-structure-plan-destructive": "planner",
   "workflow-planner": "planner",

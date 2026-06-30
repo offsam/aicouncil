@@ -26,6 +26,8 @@ export function buildMayorAnthropicCachedSystemBlocks(
     blocks.push({ type: "text", text: `\n${parts.officeSnapshot}\n` });
   }
 
+  blocks.push({ type: "text", text: `\n${parts.sharedMemoryBlock}\n` });
+
   blocks.push(
     { type: "text", text: parts.buildingsBlock, cache_control: EPHEMERAL_CACHE },
     {

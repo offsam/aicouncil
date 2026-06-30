@@ -53,6 +53,11 @@ import {
   trimMayorConversationTurnsForPrompt,
   type MayorConversationMessageKind,
 } from "./mayor-conversation-memory";
+import {
+  compactMayorSharedMemoryReadView,
+  loadMayorSharedMemory,
+  scheduleMayorSharedMemoryUpdate,
+} from "./mayor-shared-memory";
 import { sanitizeUserFacingText, toUserFacingProviderError } from "./provider-user-error";
 import { assertAgentContextAccess } from "./security/agent-context-access";
 import { buildManagerSummaryPrompt } from "./agent-persona";
@@ -1355,6 +1360,8 @@ async function executeMayorTask(
 
   const officeInventory = await computeOfficeInventoryCounts(officeId);
   const officeSnapshot = formatMayorOfficeSnapshotPrompt(officeInventory);
+  const sharedMemoryRecord = await loadMayorSharedMemory(officeId);
+  const sharedMemoryReadView = compactMayorSharedMemoryReadView(sharedMemoryRecord.summary);
 
   let decision: MayorRoutingDecision | null = null;
   let mayorAnswer: string | null = null;
@@ -1394,7 +1401,7 @@ async function executeMayorTask(
     mayorAgentSlug = agentReg.slug;
 
     try {
-      const mayorPromptOptions = { clarifyAllowed, officeSnapshot };
+      const mayorPromptOptions = { clarifyAllowed, officeSnapshot, sharedMemoryReadView };
       const mayorPromptParts = buildMayorExecutiveSystemPromptParts(
         buildingRows,
         mayorPromptOptions,
@@ -1680,6 +1687,12 @@ async function executeMayorTask(
   });
 
   await persistMayorConversationIfNeeded(options?.conversationId, taskText, answer, "answer");
+
+  scheduleMayorSharedMemoryUpdate({
+    officeId,
+    userMessage: taskText,
+    mayorAnswer: answer,
+  });
 
   return {
     mode: "single",

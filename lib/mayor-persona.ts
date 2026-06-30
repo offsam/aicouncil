@@ -24,6 +24,8 @@ export type BuildMayorExecutiveSystemPromptOptions = {
   clarifyAllowed?: boolean;
   /** Office-scoped DB counts injected into Mayor prompt (MSA-1). */
   officeSnapshot?: string | null;
+  /** Cross-channel shared memory read view (MAYOR-MEMORY-1). */
+  sharedMemoryReadView?: string | null;
 };
 
 /**
@@ -120,9 +122,16 @@ export type MayorExecutiveSystemPromptParts = {
   stablePrefix: string;
   /** Office inventory snapshot — dynamic per request. */
   officeSnapshot: string | null;
+  /** Cross-channel shared memory — dynamic per request (MAYOR-MEMORY-1). */
+  sharedMemoryBlock: string;
   /** "Available buildings:\\n" + formatted list (stable for this request). */
   buildingsBlock: string;
 };
+
+function buildSharedMemoryBlock(readView: string | null | undefined): string {
+  const body = readView?.trim() || "(no shared memory yet)";
+  return `[Shared Mayor project memory — cross-channel context]\n${body}`;
+}
 
 export function buildMayorExecutiveSystemPromptParts(
   buildings: Array<{ id: string; name: string; routing_description?: string | null }>,
@@ -141,6 +150,7 @@ ${mayorRealityStatusPolicy()}
 
 ${mayorRoutingRules(options)}`,
     officeSnapshot: options?.officeSnapshot?.trim() || null,
+    sharedMemoryBlock: buildSharedMemoryBlock(options?.sharedMemoryReadView),
     buildingsBlock: `Available buildings:\n${buildingList}`,
   };
 }
@@ -151,7 +161,7 @@ export function buildMayorExecutiveSystemPrompt(
 ): string {
   const parts = buildMayorExecutiveSystemPromptParts(buildings, options);
   const snap = parts.officeSnapshot ? `\n${parts.officeSnapshot}\n` : "";
-  return `${parts.stablePrefix}${snap}${parts.buildingsBlock}`;
+  return `${parts.stablePrefix}${snap}\n${parts.sharedMemoryBlock}\n${parts.buildingsBlock}`;
 }
 
 /** @deprecated MR-2: replaced by buildMayorExecutiveSystemPrompt. Kept for reference/tests. */
