@@ -209,6 +209,22 @@ export async function selectAgentsForExecutionMode(
   return selected;
 }
 
+export type ChamberRosterTierCounts = Record<CostTier, number>;
+
+/** Tier breakdown for a chamber roster — used for Team/Council UI gates. */
+export async function resolveChamberRosterTierCounts(
+  targetChamberEntityId: string,
+): Promise<ChamberRosterTierCounts> {
+  const candidates = await listAgentCandidatesForChamberEntity(targetChamberEntityId, {
+    rosterOnly: true,
+  });
+  const tierCounts: ChamberRosterTierCounts = { free: 0, cheap: 0, mid: 0, premium: 0 };
+  for (const agent of candidates) {
+    tierCounts[agent.costTier] += 1;
+  }
+  return tierCounts;
+}
+
 /** Chamber roster size without city-level fallback (Team/Council guard). */
 export async function countChamberRosterAgents(
   targetChamberEntityId: string,
