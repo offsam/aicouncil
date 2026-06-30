@@ -1,5 +1,10 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import type { DebateClosedReason, DebateRoundAction, DebateTierMode } from "./types";
+import type {
+  DebateClosedReason,
+  DebateRoundAction,
+  DebateSuccessClosedReason,
+  DebateTierMode,
+} from "./types";
 
 export type DebateSessionRow = {
   id: string;
@@ -89,7 +94,7 @@ export async function updateDebateSession(
     revisions_used_b: number;
     status: "active" | "closed";
     closed_reason: DebateClosedReason;
-    final_answer: string;
+    final_answer: string | null;
     closed_at: string;
   }>,
 ): Promise<void> {

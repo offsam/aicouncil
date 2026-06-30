@@ -1,7 +1,9 @@
 import type { SelectedAgent } from "@/lib/agent-selection";
 import { invokeAgentForWorkflow } from "@/lib/invoke-agent";
+import { ProviderInvokeError } from "@/lib/provider-user-error";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveCityHallDebateChamber } from "@/lib/workspace/resolve-city-hall-council-chamber";
+import { DebateInvokeFailedError } from "./debate-invoke-error";
 import { normalizeDebateTierMode } from "./types";
 import { parseDebateTurn } from "./parse-debate-turn";
 import {
@@ -17,6 +19,7 @@ import {
   type AgentDebateResult,
   type DebateAgentInfo,
   type DebateRoundSummary,
+  type DebateSuccessClosedReason,
   type DebateTierMode,
 } from "./types";
 
@@ -52,6 +55,7 @@ async function invokeDebateAgent(params: {
   agent: SelectedAgent;
   chamberRegistryId: string;
   question: string;
+  forceError?: boolean;
 }): Promise<{ answer: string; latencyMs: number }> {
   const started = Date.now();
   const answer = await invokeAgentForWorkflow({
@@ -59,8 +63,34 @@ async function invokeDebateAgent(params: {
     agentRegistryId: params.agent.agentId,
     chamberRegistryId: params.chamberRegistryId,
     question: params.question,
+    forceError: params.forceError,
   });
   return { answer, latencyMs: Date.now() - started };
+}
+
+async function failDebateSession(
+  debateId: string,
+  currentAnswer: string,
+  cause: unknown,
+): Promise<never> {
+  const internal =
+    cause instanceof ProviderInvokeError
+      ? `${cause.provider}/${cause.modelId}: ${cause.message}`
+      : cause instanceof Error
+        ? cause.message
+        : String(cause);
+  console.error(`[debate] invoke failed debateId=${debateId}`, internal);
+
+  await updateDebateSession(debateId, {
+    status: "closed",
+    closed_reason: "error",
+    final_answer: currentAnswer.trim() || null,
+    current_answer: currentAnswer,
+    current_turn_agent_id: null,
+    closed_at: new Date().toISOString(),
+  });
+
+  throw new DebateInvokeFailedError(debateId);
 }
 
 function revisionsForAgent(
@@ -82,6 +112,8 @@ export async function runAgentDebate(params: {
   tierMode: DebateTierMode;
   /** Diagnostic scripts only: simulate revise rounds without LLM to reach attempts_exhausted. */
   deterministicAlwaysRevise?: boolean;
+  /** Diagnostic scripts only: fail invoke after the initial author turn (reviewer path). */
+  forceInvokeError?: boolean;
 }): Promise<AgentDebateResult> {
   const tier = normalizeDebateTierMode(params.tierMode);
   if (!tier) {
@@ -117,8 +149,23 @@ export async function runAgentDebate(params: {
   let revisionsA = 0;
   let revisionsB = 0;
   const criticalIssues: string[] = [];
+  let invokeSeq = 0;
 
-  const invokeTurn = async (agent: SelectedAgent, question: string) => {
+  const invokeAgentTurn = async (agent: SelectedAgent, question: string) => {
+    invokeSeq += 1;
+    if (params.forceInvokeError && invokeSeq > 1) {
+      try {
+        return await invokeDebateAgent({
+          agent,
+          chamberRegistryId: debateChamber.chamberRegistryId,
+          question,
+          forceError: true,
+        });
+      } catch (err) {
+        return failDebateSession(session.id, currentAnswer, err);
+      }
+    }
+
     if (params.deterministicAlwaysRevise) {
       if (question.includes("начальный ответ")) {
         return { answer: "Deterministic initial debate answer.", latencyMs: 1 };
@@ -132,21 +179,20 @@ export async function runAgentDebate(params: {
         latencyMs: 1,
       };
     }
-    return invokeDebateAgent({
-      agent,
-      chamberRegistryId: debateChamber.chamberRegistryId,
-      question,
-    });
+
+    try {
+      return await invokeDebateAgent({
+        agent,
+        chamberRegistryId: debateChamber.chamberRegistryId,
+        question,
+      });
+    } catch (err) {
+      return failDebateSession(session.id, currentAnswer, err);
+    }
   };
 
   const initialPrompt = buildInitialAuthorPrompt(params.question);
-  const initial = params.deterministicAlwaysRevise
-    ? await invokeTurn(author, initialPrompt)
-    : await invokeDebateAgent({
-        agent: author,
-        chamberRegistryId: debateChamber.chamberRegistryId,
-        question: initialPrompt,
-      });
+  const initial = await invokeAgentTurn(author, initialPrompt);
   currentAnswer = initial.answer.trim();
   await insertDebateRound({
     debateId: session.id,
@@ -162,7 +208,7 @@ export async function runAgentDebate(params: {
   let turnRole: "reviewer" | "author" = "reviewer";
 
   const closeDebate = async (
-    reason: "confirmed" | "attempts_exhausted",
+    reason: DebateSuccessClosedReason,
     finalAnswer: string,
   ): Promise<AgentDebateResult> => {
     await updateDebateSession(session.id, {
@@ -231,7 +277,7 @@ export async function runAgentDebate(params: {
       priorCriticalIssues: criticalIssues,
     });
 
-    const turn = await invokeTurn(turnAgent, reviewPrompt);
+    const turn = await invokeAgentTurn(turnAgent, reviewPrompt);
     const parsed = parseDebateTurn(turn.answer);
 
     if (parsed.verdict === "confirm") {

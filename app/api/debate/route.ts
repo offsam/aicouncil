@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DebateInvokeFailedError } from "@/lib/debate/debate-invoke-error";
 import { isDebateTierMode } from "@/lib/debate/types";
 import { runAgentDebate } from "@/lib/debate/run-agent-debate";
 import { resolveCityHallMainAgent } from "@/lib/workspace/city-hall-orchestrator";
@@ -51,6 +52,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof DebateInvokeFailedError) {
+      return NextResponse.json({ error: err.userMessage }, { status: 500 });
+    }
     const message = err instanceof Error ? err.message : "Server error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

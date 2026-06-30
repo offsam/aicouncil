@@ -4,7 +4,12 @@ import { parseDebateTierFromMode } from "@/lib/workspace/resolve-city-hall-counc
 
 export const MAX_DEBATE_REVISIONS = 3;
 
-export type DebateClosedReason = "confirmed" | "attempts_exhausted";
+export type DebateClosedReason = "confirmed" | "attempts_exhausted" | "error";
+
+export type DebateSuccessClosedReason = Extract<
+  DebateClosedReason,
+  "confirmed" | "attempts_exhausted"
+>;
 
 /** Isolated tier debate: agents from one City Hall chamber (free / $ / $$ / $$$). */
 export type DebateTierMode = { tier: CostTier };
@@ -37,7 +42,7 @@ export type DebateRoundSummary = {
 export type AgentDebateResult = {
   debateId: string;
   answer: string;
-  closedReason: DebateClosedReason;
+  closedReason: DebateSuccessClosedReason;
   author: DebateAgentInfo;
   reviewer: DebateAgentInfo;
   councilChamberName: string;
