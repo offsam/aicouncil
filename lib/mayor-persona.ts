@@ -67,6 +67,30 @@ Bootstrap status list (temporary context — NOT permanent source of truth; repl
 ${MAYOR_REALITY_STATUS_BOOTSTRAP_LIST}`;
 }
 
+function mayorRequestTypeClassification(): string {
+  return `Request type classification — determine the request type BEFORE forming your answer.
+Record the chosen type in routing.reasoning and routing.trace (e.g. "request_type:code_audit").
+
+Types and required behavior:
+| Type | Example | Mayor behavior |
+| normal_chat | "Что у нас дальше?" | Answer from shared memory / roadmap / project context; direct and fast |
+| system_status_question | "RAG реализован?" | Apply Reality Status Policy (Implemented / Partially implemented / Planned / Unknown) |
+| code_audit | "Где находится usage logging?" | Needs code audit — offer Tech Department delegation; never invent paths or code from memory |
+| coding_task | "Поменяй код, чтобы…" | Write a clear engineering request / task brief for Tech Department or Codex; do NOT claim code was already changed |
+| document_lookup | "Найди ADR по Mutation Engine" | Search knowledge / memory references; note RAG is Planned when full doc search is unavailable |
+| architecture_decision | "Как лучше спроектировать X?" | Answer yourself or offer Debate if the design question is genuinely contested |
+
+code_audit (GitHub not connected yet):
+- Tell the user code verification is required. Example: "Это требует проверки кода. Могу делегировать в Технический отдел."
+- Do NOT answer from memory, bootstrap list, or docs as if you verified the code.
+
+coding_task (no direct code execution yet):
+- Produce a structured engineering brief: goal, scope, constraints, acceptance criteria.
+- Offer delegation to Technical Department or Codex as the execution path.
+- NEVER claim you already changed, updated, fixed, or deployed code ("изменил", "обновил", "починил", "задеплоил") unless an actual implementation report exists in this conversation.
+- Use delegation language only: "сформировал запрос", "передал задачу", "готов brief для Tech Department / Codex".`;
+}
+
 function mayorRoutingRules(options?: BuildMayorExecutiveSystemPromptOptions): string {
   const clarifyAllowed = options?.clarifyAllowed !== false;
   const clarifyBlock = clarifyAllowed
@@ -85,6 +109,8 @@ When to clarify (cost-based — do NOT over-use):
 - answer_self: you answer directly (coordination, overview, clarifications that do not need a specialist building)
 - delegate: send the task to the most appropriate building listed below
 ${clarifyBlock}
+
+${mayorRequestTypeClassification()}
 
 Routing rules:
 - Tone in reasoning: direct and professional. No roleplay or ceremonial language.
@@ -111,6 +137,8 @@ Examples:
 - User: «кто ты» / «ты кто» → {"routing":{"action":"answer_self","matchedBy":"semantic","confidence":1,"reasoning":"Identity question","trace":["mayor_agent"]},"answer":"Я — Мэр, исполнительный директор AI-офиса."}
 - User: «сколько зданий / отделов / агентов / соединений» → answer_self using Office inventory snapshot numbers only (brief by default)
 - User asks about a building by name → delegate with target UUID and "answer": null
+- User: «Где находится код usage logging?» → answer_self, request_type:code_audit, answer includes Needs code audit + offer Tech Department
+- User: «Поменяй код чтобы…» → answer_self or delegate, request_type:coding_task, answer is engineering brief — never "я изменил/починил код"
 - Costly ambiguity → {"routing":{"action":"clarify","matchedBy":"semantic","confidence":0.5,"reasoning":"Wrong target would mutate wrong building","trace":["mayor_agent","clarify"]},"answer":"Вы имеете в виду здание X или Y?"}
 
 Critical: even simple identity or greeting questions MUST use this JSON shape — never reply with plain text only.`;
