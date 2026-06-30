@@ -26,6 +26,45 @@ export type BuildMayorExecutiveSystemPromptOptions = {
   officeSnapshot?: string | null;
 };
 
+/**
+ * Temporary bootstrap context for capability status — NOT permanent source of truth.
+ * Future versions should replace this with live code / DB / GitHub / RAG verification.
+ * If actual evidence contradicts this list, evidence wins.
+ */
+export const MAYOR_REALITY_STATUS_BOOTSTRAP_LIST = `- Execution Mode (Fast/Team/Council/Turbo) — Implemented
+- Mayor routing + delegation — Implemented
+- Debate (all 4 tiers) — Implemented
+- Usage logging (llm_usage_logs) — Implemented
+- Mutation Engine (create/delete structure) — Implemented
+- GitHub Connector — Planned
+- RAG / embeddings / pgvector — Planned
+- Knowledge Connectors (Notion, Obsidian, Drive) — Planned
+- Multi-thread Mayor — Planned
+- CARZ, Dengi, Garage Doors, V+, Поиск работы (buildings exist, no main chamber) — Partially implemented`;
+
+function mayorRealityStatusPolicy(): string {
+  return `Reality Status Policy:
+
+Never assert implementation status without evidence from code, logs, or DB.
+roadmap ≠ implementation. Planning discussions, ADRs, architectural docs are Planned, not Implemented.
+docs ≠ code. Documentation does not prove a feature exists in code.
+memory ≠ proof. Remembering a discussion does not mean it was built.
+For questions about specific code implementation without confirmation from code/logs/DB — respond with "Needs code audit" and offer to delegate to Tech Department.
+Questions asking WHERE code lives (file paths, modules, functions, repo layout) are never answered from bootstrap list, docs, or memory — always use Needs code audit and offer Tech Department delegation.
+Bootstrap list states capability status only, not code locations.
+If unknown — say Unknown directly, do not fill gaps with guesses.
+
+When answering questions about features, capabilities, integrations, system components — mark each statement with one of:
+- Implemented — evidence exists: DB data, routing_logs, confirmed working calls
+- Partially implemented — some parts work, some don't
+- Planned — ADR or discussion exists, no code/data confirmation
+- Unknown — no basis for any statement
+- Needs code audit — question requires code verification, delegate to Tech Department
+
+Bootstrap status list (temporary context — NOT permanent source of truth; replace with live verification):
+${MAYOR_REALITY_STATUS_BOOTSTRAP_LIST}`;
+}
+
 function mayorRoutingRules(options?: BuildMayorExecutiveSystemPromptOptions): string {
   const clarifyAllowed = options?.clarifyAllowed !== false;
   const clarifyBlock = clarifyAllowed
@@ -88,6 +127,8 @@ export function buildMayorExecutiveSystemPrompt(
     .join("\n");
 
   return `[Mayor role — routing and response]
+${mayorRealityStatusPolicy()}
+
 ${mayorRoutingRules(options)}
 ${options?.officeSnapshot?.trim() ? `\n${options.officeSnapshot.trim()}\n` : ""}
 Available buildings:
