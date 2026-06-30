@@ -206,6 +206,38 @@ function extractTextAnswer(content: AnthropicContentBlock[] | undefined): string
   return text || null;
 }
 
+function patchMayorEnvelopeAnswer(raw: string): string {
+  try {
+    const obj = JSON.parse(raw) as {
+      answer?: unknown;
+      routing?: { action?: unknown; reasoning?: unknown };
+    };
+    if (
+      obj &&
+      typeof obj === "object" &&
+      obj.routing?.action === "answer_self" &&
+      (!obj.answer || !String(obj.answer).trim()) &&
+      obj.routing?.reasoning &&
+      String(obj.routing.reasoning).trim()
+    ) {
+      obj.answer = String(obj.routing.reasoning).trim();
+      console.log("[mayor-github] patched empty envelope answer from routing.reasoning");
+      return JSON.stringify(obj);
+    }
+  } catch {
+    // не JSON — вернуть как есть
+  }
+  return raw;
+}
+
+const MAYOR_GITHUB_FINALIZATION_MESSAGE =
+  "You have received GitHub tool results. Return a valid Mayor JSON envelope now.\n" +
+  'Set routing.action to "answer_self".\n' +
+  'Put the final user-facing answer in the top-level "answer" field.\n' +
+  'The "answer" field must be a non-empty string with concrete file paths and findings.\n' +
+  "Do not put the final answer only in routing.reasoning.\n" +
+  "Do not call more tools unless absolutely necessary.";
+
 async function callAnthropicWithTools(params: {
   modelId: string;
   systemField: string | AnthropicSystemBlock[] | undefined;
@@ -331,7 +363,7 @@ export async function invokeMayorWithGitHubTools(params: {
           finalStopReason: data.stop_reason ?? null,
           hasTextResponse: true,
         });
-        return answer;
+        return patchMayorEnvelopeAnswer(answer);
       }
 
       const assistantContent = data.content ?? [];
@@ -363,8 +395,7 @@ export async function invokeMayorWithGitHubTools(params: {
         },
         {
           role: "user",
-          content:
-            "You have received GitHub tool results. Stop calling tools unless absolutely necessary. Provide a final answer now with concrete file paths and findings.",
+          content: MAYOR_GITHUB_FINALIZATION_MESSAGE,
         },
       ];
     }
