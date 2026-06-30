@@ -115,10 +115,19 @@ Critical: even simple identity or greeting questions MUST use this JSON shape �
 }
 
 /** Combined system prompt: routing authority + answer when answer_self. */
-export function buildMayorExecutiveSystemPrompt(
+export type MayorExecutiveSystemPromptParts = {
+  /** Role header + Reality Status Policy + routing rules (stable for this request). */
+  stablePrefix: string;
+  /** Office inventory snapshot — dynamic per request. */
+  officeSnapshot: string | null;
+  /** "Available buildings:\\n" + formatted list (stable for this request). */
+  buildingsBlock: string;
+};
+
+export function buildMayorExecutiveSystemPromptParts(
   buildings: Array<{ id: string; name: string; routing_description?: string | null }>,
   options?: BuildMayorExecutiveSystemPromptOptions,
-): string {
+): MayorExecutiveSystemPromptParts {
   const buildingList = buildings
     .map(
       (b) =>
@@ -126,13 +135,23 @@ export function buildMayorExecutiveSystemPrompt(
     )
     .join("\n");
 
-  return `[Mayor role — routing and response]
+  return {
+    stablePrefix: `[Mayor role — routing and response]
 ${mayorRealityStatusPolicy()}
 
-${mayorRoutingRules(options)}
-${options?.officeSnapshot?.trim() ? `\n${options.officeSnapshot.trim()}\n` : ""}
-Available buildings:
-${buildingList}`;
+${mayorRoutingRules(options)}`,
+    officeSnapshot: options?.officeSnapshot?.trim() || null,
+    buildingsBlock: `Available buildings:\n${buildingList}`,
+  };
+}
+
+export function buildMayorExecutiveSystemPrompt(
+  buildings: Array<{ id: string; name: string; routing_description?: string | null }>,
+  options?: BuildMayorExecutiveSystemPromptOptions,
+): string {
+  const parts = buildMayorExecutiveSystemPromptParts(buildings, options);
+  const snap = parts.officeSnapshot ? `\n${parts.officeSnapshot}\n` : "";
+  return `${parts.stablePrefix}${snap}${parts.buildingsBlock}`;
 }
 
 /** @deprecated MR-2: replaced by buildMayorExecutiveSystemPrompt. Kept for reference/tests. */

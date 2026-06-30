@@ -1,7 +1,16 @@
 import { buildContext } from "./entity-registry";
 import { CHAMBER_ANSWER_SYSTEM_PREFIX } from "./agent-persona";
+import {
+  anthropicSystemBlocksToString,
+  buildMayorAnthropicCachedSystemBlocks,
+} from "./anthropic-prompt-cache";
 import { callConfiguredAgentProvider } from "./agent-provider-call";
 import { loadAgentRuntimeConfig } from "./agent-runtime-config";
+import type { MayorExecutiveSystemPromptParts } from "./mayor-persona";
+import {
+  computeMayorContextBudget,
+  logMayorContextBudget,
+} from "./mayor-context-budget";
 import { ProviderInvokeError } from "./provider-user-error";
 
 function truncate(text: string, max: number): string {
@@ -19,6 +28,8 @@ export type InvokeAgentParams = {
   forceError?: boolean;
   /** Prepended before buildContext flattenedPrompt (e.g. role overlay). */
   systemPromptPrefix?: string | null;
+  /** Mayor-only structured prompt parts for Anthropic cache breakpoints (MAYOR-COST-1A). */
+  mayorPromptParts?: MayorExecutiveSystemPromptParts | null;
   /** Override max output tokens (e.g. Mayor JSON envelope). */
   maxTokens?: number;
   /** Prior user/assistant turns in the same conversation (Mayor memory). */
@@ -54,6 +65,33 @@ export async function invokeAgentForWorkflow(params: InvokeAgentParams): Promise
     systemPrompt += `\n\n[Previous workflow step output]\n${truncate(params.previousStepOutput, 2000)}`;
   }
 
+  let anthropicSystemBlocks: ReturnType<typeof buildMayorAnthropicCachedSystemBlocks> | undefined;
+  if (params.mayorPromptParts && runtimeConfig.provider === "anthropic") {
+    anthropicSystemBlocks = buildMayorAnthropicCachedSystemBlocks(
+      params.mayorPromptParts,
+      context.flattenedPrompt,
+    );
+    const cachedString = anthropicSystemBlocksToString(anthropicSystemBlocks);
+    if (cachedString.trim() !== systemPrompt.trim()) {
+      console.warn(
+        "[invoke-agent] Mayor Anthropic cache blocks diverge from string system prompt — using string fallback",
+      );
+      anthropicSystemBlocks = undefined;
+    } else {
+      logMayorContextBudget(
+        computeMayorContextBudget({
+          stablePrefix: params.mayorPromptParts.stablePrefix,
+          officeSnapshot: params.mayorPromptParts.officeSnapshot,
+          buildingsBlock: params.mayorPromptParts.buildingsBlock,
+          chamberAnswerPrefix: CHAMBER_ANSWER_SYSTEM_PREFIX,
+          agentContext: context.flattenedPrompt,
+          conversationHistory: params.conversationHistory ?? [],
+          userMessage: params.question,
+        }),
+      );
+    }
+  }
+
   console.info(
     `[invoke-agent] agent=${runtimeConfig.agentId} provider=${runtimeConfig.provider} model=${runtimeConfig.modelId}`,
   );
@@ -66,6 +104,7 @@ export async function invokeAgentForWorkflow(params: InvokeAgentParams): Promise
     conversationHistory: params.conversationHistory,
     usagePurpose: params.usagePurpose ?? "agent_invoke",
     usageIsFallback: params.usageIsFallback,
+    anthropicSystemBlocks,
   });
 }
 

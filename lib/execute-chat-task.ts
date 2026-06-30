@@ -41,6 +41,7 @@ import { isMainChamber } from "./workspace/is-main-chamber";
 import { resolveCityHallMainAgent } from "./workspace/city-hall-orchestrator";
 import {
   buildMayorExecutiveSystemPrompt,
+  buildMayorExecutiveSystemPromptParts,
   MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER,
   MAYOR_ROUTING_MISSING_ANSWER,
 } from "./mayor-persona";
@@ -1390,6 +1391,11 @@ async function executeMayorTask(
     mayorAgentSlug = agentReg.slug;
 
     try {
+      const mayorPromptOptions = { clarifyAllowed, officeSnapshot };
+      const mayorPromptParts = buildMayorExecutiveSystemPromptParts(
+        buildingRows,
+        mayorPromptOptions,
+      );
       const invoked = await invokeChamberAgentWithFreeFallback({
         chamberRegistryId: mayorChamberRegistryId,
         question: resolvedTaskText,
@@ -1399,10 +1405,8 @@ async function executeMayorTask(
           registryId: mayorAgentId,
           costTier: "mid",
         },
-        systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows, {
-          clarifyAllowed,
-          officeSnapshot,
-        }),
+        systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows, mayorPromptOptions),
+        mayorPromptParts,
         forceError: options?.forceMayorInvokeError,
         maxTokens: 4096,
         conversationHistory: modelHistory,

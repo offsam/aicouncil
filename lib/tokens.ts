@@ -2,16 +2,32 @@ export interface TokenUsage {
   input: number;
   output: number;
   total: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }
 
 export function anthropicUsage(data: unknown): TokenUsage | undefined {
   const usage = (
-    data as { usage?: { input_tokens?: number; output_tokens?: number } }
+    data as {
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+    }
   ).usage;
   if (!usage) return undefined;
   const input = usage.input_tokens ?? 0;
   const output = usage.output_tokens ?? 0;
-  return { input, output, total: input + output };
+  const result: TokenUsage = { input, output, total: input + output };
+  if (usage.cache_creation_input_tokens != null) {
+    result.cacheCreationInputTokens = usage.cache_creation_input_tokens;
+  }
+  if (usage.cache_read_input_tokens != null) {
+    result.cacheReadInputTokens = usage.cache_read_input_tokens;
+  }
+  return result;
 }
 
 export function openAIUsage(data: unknown): TokenUsage | undefined {

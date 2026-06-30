@@ -4,6 +4,7 @@ import {
   type SelectedAgent,
 } from "./agent-selection";
 import { invokeAgentForWorkflow } from "./invoke-agent";
+import type { MayorExecutiveSystemPromptParts } from "./mayor-persona";
 
 export type ChamberInvokeResult = {
   answer: string;
@@ -24,6 +25,8 @@ export async function invokeChamberAgentWithFreeFallback(params: {
   conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
   /** llm_usage_logs.purpose */
   usagePurpose?: string;
+  /** Mayor-only structured prompt parts for Anthropic cache breakpoints (MAYOR-COST-1A). */
+  mayorPromptParts?: MayorExecutiveSystemPromptParts | null;
 }): Promise<ChamberInvokeResult> {
   const primary =
     params.primaryAgent ??
@@ -40,6 +43,7 @@ export async function invokeChamberAgentWithFreeFallback(params: {
       question: params.question,
       forceError: params.forceError,
       systemPromptPrefix: params.systemPromptPrefix,
+      mayorPromptParts: params.mayorPromptParts,
       maxTokens: params.maxTokens,
       conversationHistory: params.conversationHistory,
       usagePurpose: params.usagePurpose ?? "chamber_answer",
@@ -62,6 +66,7 @@ export async function invokeChamberAgentWithFreeFallback(params: {
         chamberRegistryId: params.chamberRegistryId,
         question: params.question,
         systemPromptPrefix: params.systemPromptPrefix,
+        mayorPromptParts: params.mayorPromptParts,
         maxTokens: params.maxTokens,
         conversationHistory: params.conversationHistory,
         usagePurpose: params.usagePurpose ?? "chamber_answer",

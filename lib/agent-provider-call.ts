@@ -1,7 +1,9 @@
 import { parseAnthropicError, parseDeepSeekError, parseOpenAIError } from "./api-types";
+import type { AnthropicSystemBlock } from "./anthropic-prompt-cache";
 import { callGeminiConfiguredModel } from "./gemini-models";
 import { callGroqConfiguredModel, type GroqMessage } from "./groq-models";
 import { insertLlmUsageLog } from "./llm-usage-log";
+import { logAnthropicCacheUsage } from "./mayor-context-budget";
 import { buildOpenAiTokenLimitFields } from "./openai-token-limit";
 import { callOpenRouterConfiguredModel } from "./openrouter-free";
 import type { AgentRuntimeConfig } from "./agent-runtime-config";
@@ -18,6 +20,8 @@ type AgentProviderCallParams = {
   /** llm_usage_logs.purpose — e.g. mayor_answer, manager_answer, agent_invoke. */
   usagePurpose?: string;
   usageIsFallback?: boolean;
+  /** Anthropic-only structured system blocks with cache_control (Mayor stable prefix). */
+  anthropicSystemBlocks?: AnthropicSystemBlock[];
 };
 
 type MayorConversationTurn = {
@@ -66,11 +70,17 @@ async function callAnthropicConfigured(
   maxTokens: number,
   conversationHistory: MayorConversationTurn[] = [],
   meta?: ConfiguredCallMeta,
+  anthropicSystemBlocks?: AnthropicSystemBlock[],
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new ProviderInvokeError("anthropic", modelId, "ANTHROPIC_API_KEY missing");
   }
+
+  const systemField =
+    anthropicSystemBlocks && anthropicSystemBlocks.length > 0
+      ? anthropicSystemBlocks
+      : systemPrompt || undefined;
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -82,7 +92,7 @@ async function callAnthropicConfigured(
     body: JSON.stringify({
       model: modelId,
       max_tokens: maxTokens,
-      system: systemPrompt || undefined,
+      system: systemField,
       messages: anthropicMessages(question, conversationHistory),
     }),
   });
@@ -115,6 +125,7 @@ async function callAnthropicConfigured(
     throw new ProviderInvokeError("anthropic", modelId, "Anthropic returned empty answer");
   }
   if (meta?.purpose) {
+    logAnthropicCacheUsage(meta.purpose, rawUsage);
     await insertLlmUsageLog({
       provider: "anthropic",
       modelId,
@@ -278,6 +289,7 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
       maxTokens,
       conversationHistory,
       meta,
+      params.anthropicSystemBlocks,
     );
   }
 
