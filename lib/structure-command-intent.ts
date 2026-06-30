@@ -68,13 +68,6 @@ export const EXPLICIT_STRUCTURE_MUTATION_PHRASES = [
   "изменить разрешен",
 ];
 
-/**
- * User-facing refusal when delete/remove is requested via chat Mutation Planner.
- * Current planner is create-only; a future Mutation Engine may support destructive ops.
- */
-export const CHAT_DESTRUCTIVE_MUTATION_UNSUPPORTED_ANSWER =
-  "Удаление через чат пока не поддерживается. Используйте Inspector или соответствующий интерфейс управления.";
-
 /** Affirmative delete/remove/erase verb stems (Cyrillic-safe). */
 const DESTRUCTIVE_VERB_RE = /(?:удал[\p{L}]*|remove|delete|стер[\p{L}]*)/giu;
 

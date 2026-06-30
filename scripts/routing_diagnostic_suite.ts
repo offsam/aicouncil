@@ -20,7 +20,10 @@ import { isStructureMutationCommand } from "../lib/structure-command-intent";
 import { classifyTechDepartmentIntent } from "../lib/tech-department/intent";
 import { listBuildingInternalChambers } from "../lib/workspace/building-internal-chambers";
 import { resolveMainChamber } from "../lib/workspace/resolve-main-chamber";
-import { TECH_DEPARTMENT_BUILDING_ID } from "../lib/workspace/tech-department";
+import {
+  requireExternalEntryOfficeId,
+  requireTechDepartmentBuildingId,
+} from "../lib/workspace/graph-identity-required";
 import {
   auditExistingBuildings,
   ensureTestFixture,
@@ -44,7 +47,6 @@ type TestResult = {
 };
 
 const PROTECTED = {
-  TECH: TECH_DEPARTMENT_BUILDING_ID,
   LAWYERS: "99a8efff-d39d-4130-8553-7dada4c07b1a",
   CITIZLY: "9afd85bf-ce54-4c8b-bc78-c2ff7fcd9a57",
 } as const;
@@ -80,6 +82,7 @@ async function loadBuildingsForMayor(
 
 async function runMayorTests(
   buildings: Array<{ id: string; name: string; routing_description?: string | null }>,
+  techBuildingId: string,
 ) {
   const cases: Array<{
     name: string;
@@ -93,13 +96,13 @@ async function runMayorTests(
     {
       name: "structure_command keyword",
       text: "Создай-ка в проекте city зли отдел который отвечает за промты для видео",
-      expectTarget: PROTECTED.TECH,
+      expectTarget: techBuildingId,
       expectMatchedBy: "structure_command",
     },
     {
       name: "structure_command_llm slang",
       text: "запилить секцию для видео в city с двумя ботами",
-      expectTarget: PROTECTED.TECH,
+      expectTarget: techBuildingId,
       expectMatchedBy: "mayor_agent",
       keywordGate: false,
     },
@@ -112,20 +115,20 @@ async function runMayorTests(
     {
       name: "explicit_name Citizly (read-only)",
       text: "почему не работает роутинг в Citizly",
-      expectNotTarget: PROTECTED.TECH,
+      expectNotTarget: techBuildingId,
       expectAction: "delegate",
       expectMatchedBy: "mayor_agent",
     },
     {
       name: "diagnose not tech",
       text: "почему не работает роутинг в Citizly",
-      expectNotTarget: PROTECTED.TECH,
+      expectNotTarget: techBuildingId,
       expectMatchedBy: "mayor_agent",
     },
     {
       name: "conflict topic+structure",
       text: "В отделе юристы создай новый отдел DMV",
-      expectTarget: PROTECTED.TECH,
+      expectTarget: techBuildingId,
       expectMatchedBy: "structure_command",
     },
     {
@@ -628,7 +631,7 @@ function collectOpenQuestions() {
     "city_builder_architecture_reference.md §3: Team = free+mid, Council = free+mid+premium; код agent-selection.ts: Team = free+cheap, Council = free+cheap+mid. Какой эталон верный?",
   );
   openQuestions.push(
-    "Debate жёстко привязан к City Hall «Совет города», а не к t_ chamber — полный цикл спора нельзя изолировать на t_ сущностях без изменения кода.",
+    "Debate резолвится по tier chambers (free/$/$$/$$$) в City Hall, не по t_ fixture chambers — полный цикл спора на t_ сущностях без отдельных tier-отделов невозможен.",
   );
   openQuestions.push(
     "classifyTechDepartmentIntent для текста без diagnose/structure ключей возвращает diagnose (не unknown) — это задокументировано только в коде, не в architecture_reference.",
@@ -673,10 +676,12 @@ async function main() {
   printEntityInventory(fixture);
 
   const buildings = await loadBuildingsForMayor(supabase);
+  const officeId = await requireExternalEntryOfficeId();
+  const techBuildingId = await requireTechDepartmentBuildingId(officeId);
 
   console.log("\n=== Step 2: Run diagnostic tests ===");
 
-  await runMayorTests(buildings);
+  await runMayorTests(buildings, techBuildingId);
   await runManagerTests(fixture);
   runTechIntentTests();
   await runKnowledgeTests(fixture, supabase);

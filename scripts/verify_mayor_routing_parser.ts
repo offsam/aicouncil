@@ -8,7 +8,10 @@ import {
   parseMayorAgentRoutingEnvelope,
   resolveDeterministicMayorRoutingDecision,
 } from "../lib/mayor-routing";
-import { TECH_DEPARTMENT_BUILDING_ID } from "../lib/workspace/tech-department";
+import {
+  requireExternalEntryOfficeId,
+  requireTechDepartmentBuildingId,
+} from "../lib/workspace/graph-identity-required";
 
 for (const line of fs.readFileSync(".env.local", "utf8").split("\n")) {
   const i = line.indexOf("=");
@@ -16,10 +19,6 @@ for (const line of fs.readFileSync(".env.local", "utf8").split("\n")) {
 }
 
 const LAWYERS = "99a8efff-d39d-4130-8553-7dada4c07b1a";
-const BUILDINGS = [
-  { id: TECH_DEPARTMENT_BUILDING_ID, name: "Технический отдел" },
-  { id: LAWYERS, name: "ЮРИСТЫ", routing_description: "Legal" },
-];
 
 type Check = { name: string; pass: boolean; details: Record<string, unknown> };
 const checks: Check[] = [];
@@ -31,11 +30,17 @@ function record(name: string, pass: boolean, details: Record<string, unknown>) {
 }
 
 async function main() {
+  const officeId = await requireExternalEntryOfficeId();
+  const techBuildingId = await requireTechDepartmentBuildingId(officeId);
+  const BUILDINGS = [
+    { id: techBuildingId, name: "Технический отдел" },
+    { id: LAWYERS, name: "ЮРИСТЫ", routing_description: "Legal" },
+  ];
   const structure = await resolveDeterministicMayorRoutingDecision(
     "создай новый отдел для видео",
     BUILDINGS,
   );
-  record("deterministic structure gate → Tech", structure?.matchedBy === "structure_command" && structure?.target === TECH_DEPARTMENT_BUILDING_ID, {
+  record("deterministic structure gate → Tech", structure?.matchedBy === "structure_command" && structure?.target === techBuildingId, {
     matchedBy: structure?.matchedBy,
     target: structure?.target,
   });

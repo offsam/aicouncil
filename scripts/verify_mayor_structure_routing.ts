@@ -5,7 +5,10 @@ import * as fs from "fs";
 import { createClient } from "@supabase/supabase-js";
 import { resolveDeterministicMayorRoutingDecision } from "../lib/mayor-routing";
 import { isStructureMutationCommand } from "../lib/structure-command-intent";
-import { TECH_DEPARTMENT_BUILDING_ID } from "../lib/workspace/tech-department";
+import {
+  requireExternalEntryOfficeId,
+  requireTechDepartmentBuildingId,
+} from "../lib/workspace/graph-identity-required";
 
 for (const line of fs.readFileSync(".env.local", "utf8").split("\n")) {
   const i = line.indexOf("=");
@@ -42,13 +45,16 @@ const CASES = [
   },
 ];
 
-function labelDecision(target: string | undefined): string {
-  if (target === TECH_DEPARTMENT_BUILDING_ID) return "Tech Dept";
+function labelDecision(target: string | undefined, techBuildingId: string): string {
+  if (target === techBuildingId) return "Tech Dept";
   if (target === LAWYERS_BUILDING_ID) return "ЮРИСТЫ";
   return target ?? "(none/answer_self)";
 }
 
 async function main() {
+  const officeId = await requireExternalEntryOfficeId();
+  const techBuildingId = await requireTechDepartmentBuildingId(officeId);
+
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -73,7 +79,7 @@ async function main() {
     if (testCase.expect === "tech") {
       ok =
         decision?.matchedBy === "structure_command" &&
-        decision.target === TECH_DEPARTMENT_BUILDING_ID;
+        decision.target === techBuildingId;
     } else {
       ok = decision === null;
     }
@@ -81,7 +87,7 @@ async function main() {
     console.log(`[${ok ? "PASS" : "FAIL"}] ${testCase.name}`);
     console.log(`  text: ${testCase.text.slice(0, 80)}${testCase.text.length > 80 ? "…" : ""}`);
     console.log(`  structure_gate: ${structureGate}`);
-    console.log(`  deterministic: ${decision ? `${decision.action}/${decision.matchedBy} → ${labelDecision(decision.target)}` : "null (Mayor agent decides)"}`);
+    console.log(`  deterministic: ${decision ? `${decision.action}/${decision.matchedBy} → ${labelDecision(decision.target, techBuildingId)}` : "null (Mayor agent decides)"}`);
     console.log(`  expected: ${testCase.expect}`);
     console.log("");
 

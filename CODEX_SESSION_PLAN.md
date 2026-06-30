@@ -1,176 +1,86 @@
-# План и история работ по проекту AI Consult
+# CODEX Session Plan — historical handoff
 
-Дата сессии: 2026-06-25
+> **Status: historical.** This document records a **2026-06-25** session (Sprints 3–5) about building creation and `routing_description`. It is **not** the current architecture or backlog.
+>
+> For operational truth after Phase 1, see **`README.md`** (Project Status) and **`docs/migration/`**.
 
-Этот файл собран как рабочий handoff-артефакт: что было сделано в ходе сессии, какие узкие места были найдены, что уже закрыто, и какой следующий порядок действий имеет смысл для команды.
+---
 
-## 1. Что было проверено в начале сессии
+## Current architecture (post–Phase 1 summary)
 
-Целью первого этапа было глубокое изучение проекта и сбор полной картины:
+| Topic | Then (this file) | Now |
+|-------|------------------|-----|
+| Mayor routing | `resolveRoutingDecision()` semantic matching over building list | **Mayor agent routing (MR-2)** — deterministic gates + configured Mayor LLM; `resolveRoutingDecision()` is **@deprecated** (deterministic subset only) |
+| Structure changes | Not covered | **Tech Department Mutation Engine** (planner → impact → confirm → execute) |
+| Office / City Hall / Tech identity | Label/name heuristics, hardcoded UUIDs | **Graph resolvers** (`graph-identity.ts`) + **require-*** invariants; `resolve-production-office.ts` **removed** |
+| Building descriptions | Mandatory `routing_description` on create (Sprint 5) | Still required; feeds Mayor agent context |
 
-- какие сущности существуют в системе;
-- как устроены building / chamber / agent / routing;
-- какие UI-пути создают и редактируют сущности;
-- где routing логика опирается на `routing_description`;
-- какие слабые места есть у routing и создания зданий;
-- что ещё осталось на backend и не было закрыто фронтом.
+### ✅ Phase 1 completed
 
-В ходе диагностики были подтверждены следующие вещи:
+Routing, observability, Mayor memory, Mutation Engine (planner, impact, snapshot, confirmation, atomic execute), compound detection, anaphora resolver, managed LLM roles, workspace graph identity (1A–1C), and legacy orphan cleanup.
 
-- `resolveRoutingDecision()` использует только `id`, `name`, `routing_description` зданий.
-- пустые или тестовые `routing_description` снижают точность semantic matching.
-- для уточняющих сообщений контекст здания не сохраняется автоматически, если его не повторить явно.
-- тестовые здания и заглушки сильно засоряют routing-промпт.
+### 🚧 Phase 2 planned
 
-## 2. Что уже было сделано до текущего файла
+**Knowledge Connectors** — next chapter; not started. See `README.md` → Project Status.
 
-### 2.1 Sprint 3
+---
 
-Были проверены и доведены до конца изменения по анимации маршрута:
+## Historical record: 2026-06-25 session
 
-- dimming стал запускаться сразу при отправке задачи;
-- подсветка маршрута проходит полный цикл без зависаний;
-- исправлены ошибки типов в `scripts/evidence-utils.ts`;
-- прогон `npx tsc --noEmit` был доведён до чистого состояния.
+Date: 2026-06-25
 
-### 2.2 Sprint 4
+Handoff artifact from the session: what was checked, what was done, and follow-ups **as of that date**.
 
-Была добавлена отдельная кнопка для назначения главного отдела здания:
+### 1. What was checked at session start
 
-- отделён `manager_agent_id` от `routing_role = 'main'`;
-- добавлен UI для переключения главного отдела здания;
-- обеспечено автоматическое снятие `main` у предыдущего отдела;
-- добавлено визуальное разделение между "главным агентом" и "главным отделом".
+- building / chamber / agent / routing model
+- UI paths that create and edit entities
+- reliance on `routing_description` for routing quality
+- gaps between backend and frontend
 
-### 2.3 Routing description / диагностика
+Confirmed at the time:
 
-После диагностики были приняты решения по данным:
+- `resolveRoutingDecision()` used only `id`, `name`, `routing_description` of buildings (**since superseded by MR-2**)
+- empty or test `routing_description` values hurt semantic matching
+- clarifying messages did not retain building context without explicit mention
+- test buildings polluted the routing prompt
 
-- заполнены и уточнены `routing_description` для основных зданий;
-- тестовые здания были убраны из набора routing targets;
-- было выяснено, что routing становится заметно хуже без осмысленных описаний;
-- были подтверждены слабые места semantic matching при росте числа зданий.
+### 2. Work done before this file
 
-## 3. Что было сделано в этой сессии по Sprint 5
+**Sprint 3** — route animation dimming/highlight cycle; type fixes; clean `tsc`.
 
-Основная задача этой сессии: сделать описание здания обязательным при создании.
+**Sprint 4** — main department vs `manager_agent_id`; UI to switch building main chamber.
 
-### 3.1 Backend
+**Routing description** — filled descriptions for main buildings; removed test buildings from routing targets.
 
-Изменён API создания объектов:
+### 3. Sprint 5 (this session): mandatory building description
 
-- для `object_type = "room"` теперь обязательны:
-  - `label`
-  - `routing_description`
-- если одно из полей пустое, API возвращает `400`;
-- при создании нового building-записи `routing_description` сразу сохраняется в `entity_registry`;
-- существующие записи не перезаписываются автоматически.
+**Backend** — `object_type = "room"` requires `label` + `routing_description`; 400 if missing.
 
-Затронутые места:
+**Workspace UI** — `BuildingCreateDialog` blocks until both fields filled.
 
-- `app/api/offices/[officeId]/objects/route.ts`
-- `lib/entity-registry-ensure.ts`
+**Legacy floor/editor** — same contract in `FloorScene.tsx`.
 
-### 3.2 Workspace UI
+**Scripts** — test fixtures updated to pass `routing_description`.
 
-Добавлен единый диалог создания здания:
+### 4. Verification (2026-06-25)
 
-- название здания;
-- описание назначения здания;
-- создание блокируется, пока оба поля не заполнены.
+- `npx tsc --noEmit` — pass
+- Live API: 400 without label/description; success with both
 
-Затронутые места:
+### 5. Team notes (historical)
 
-- `components/workspace/BuildingCreateDialog.tsx`
-- `components/workspace/WorkspaceToolbar.tsx`
-- `components/workspace/WorkspaceCanvas.tsx`
-- `app/structure/page.tsx`
-- `lib/workspace/i18n/messages.ts`
+- Routing quality still depends on good `routing_description` (feeds Mayor agent context today)
+- Test buildings should stay out of production routing targets
+- Session memory for clarifying questions was an open risk (**partially addressed later** by Mayor memory + anaphora work in Phase 1)
 
-### 3.3 Legacy floor/editor path
+### 6. Follow-ups from that session (may be done or obsolete)
 
-Чтобы новый контракт не ломался в старой ветке создания room/building, была также закрыта floor-ветка:
+1. Smoke-test building create in workspace and `/structure`
+2. Improve remaining `routing_description` values
+3. Design last-target / session memory for Mayor clarifications → **see Phase 1 Mayor memory**
 
-- creation flow теперь тоже просит описание;
-- при создании room/building оно прокидывается в API;
-- local fallback registry также сохраняет `routing_description`.
-
-Затронутый файл:
-
-- `components/floor/FloorScene.tsx`
-
-### 3.4 Тестовые и evidence-скрипты
-
-Обновлены скрипты, где создавались здания, чтобы они тоже передавали `routing_description`.
-
-Это закрывает скрытые автоматические пути, которые могли бы продолжать создавать "пустые" здания.
-
-## 4. Что было проверено после изменений
-
-### 4.1 TypeScript
-
-Проверка типов была выполнена успешно:
-
-- `npx tsc --noEmit` проходит без ошибок.
-
-### 4.2 API-верификация
-
-Был выполнен живой локальный тест через dev server:
-
-- запрос без `label` дал `400`;
-- запрос без `routing_description` дал `400`;
-- запрос с обоими полями создал объект успешно;
-- временный объект был удалён после проверки.
-
-### 4.3 Поиск незакрытых путей
-
-Был сделан поиск по коду всех `room`-созданий:
-
-- основной workspace закрыт;
-- `/structure` закрыт;
-- floor/editor закрыт;
-- тестовые скрипты обновлены.
-
-## 5. Текущее состояние проекта после сессии
-
-Сейчас система находится в таком состоянии:
-
-- новый building больше нельзя создать без описания;
-- routing теперь получает более качественные данные;
-- старые пустые пути создания в коде закрыты;
-- проверка типов чистая;
-- локальный dev server был остановлен для снижения потребления памяти.
-
-## 6. Что важно помнить команде дальше
-
-### 6.1 Контекст routing
-
-Routing всё ещё сильно зависит от качества `routing_description`.
-
-Если описание плохое или слишком узкое:
-
-- Mayor может ошибаться в выборе здания;
-- контекст может уехать не туда;
-- диалог может рваться на уточняющих сообщениях.
-
-### 6.2 Тестовые здания
-
-Тестовые или служебные здания желательно держать вне routing targets, если они не нужны в продакшене.
-
-### 6.3 Контекст истории
-
-По диагностике уже видно, что уточняющий вопрос без явного упоминания здания не всегда удерживает прошлый контекст.
-
-Это не баг этой сессии, а системный риск routing-архитектуры.
-
-## 7. Короткий список следующих задач
-
-1. Проверить на живом интерфейсе, что новый диалог создания здания в workspace и `/structure` работает без обходов.
-2. После следующего запуска dev-сервера сделать ручной smoke test создания здания с описанием.
-3. При желании команды продолжить улучшение routing_description у оставшихся зданий.
-4. Если важна продакшен-надёжность, отдельно спроектировать сохранение last-target / session memory для уточняющих вопросов Mayor.
-
-## 8. Файлы, которые были ключевыми в этой сессии
+### 7. Key files (Sprint 5 scope)
 
 - `app/api/offices/[officeId]/objects/route.ts`
 - `lib/entity-registry-ensure.ts`
@@ -181,12 +91,6 @@ Routing всё ещё сильно зависит от качества `routing
 - `app/structure/page.tsx`
 - `lib/workspace/i18n/messages.ts`
 
-## 9. Итог
+### 8. Session outcome (2026-06-25)
 
-Сессия завершила важную техническую дыру:
-
-- создание зданий теперь требует осмысленного `routing_description`;
-- это закрыто и на backend, и на основных UI-путях;
-- legacy/editor-ветка тоже не осталась в обходе;
-- проект стал заметно устойчивее для routing и дальнейшего наполнения зданиями.
-
+Building creation requires meaningful `routing_description` on backend and main UI paths; legacy editor path aligned. Project was in a better state for routing data quality — **before** the Phase 1 Mayor agent and Mutation Engine work that followed.
