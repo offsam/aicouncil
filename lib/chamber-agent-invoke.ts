@@ -5,6 +5,7 @@ import {
 } from "./agent-selection";
 import { invokeAgentForWorkflow } from "./invoke-agent";
 import type { MayorExecutiveSystemPromptParts } from "./mayor-persona";
+import type { MayorGitHubToolMode } from "./mayor-github-invoke";
 
 export type ChamberInvokeResult = {
   answer: string;
@@ -27,6 +28,8 @@ export async function invokeChamberAgentWithFreeFallback(params: {
   usagePurpose?: string;
   /** Mayor-only structured prompt parts for Anthropic cache breakpoints (MAYOR-COST-1A). */
   mayorPromptParts?: MayorExecutiveSystemPromptParts | null;
+  /** Mayor GitHub tools — code_audit / coding_task only (GITHUB-CONNECTOR-V1). */
+  mayorGitHubToolMode?: MayorGitHubToolMode | null;
 }): Promise<ChamberInvokeResult> {
   const primary =
     params.primaryAgent ??
@@ -47,6 +50,7 @@ export async function invokeChamberAgentWithFreeFallback(params: {
       maxTokens: params.maxTokens,
       conversationHistory: params.conversationHistory,
       usagePurpose: params.usagePurpose ?? "chamber_answer",
+      mayorGitHubToolMode: params.mayorGitHubToolMode,
     });
     return { answer, agent: primary, governmentFallback: false };
   } catch (primaryErr) {
@@ -71,6 +75,7 @@ export async function invokeChamberAgentWithFreeFallback(params: {
         conversationHistory: params.conversationHistory,
         usagePurpose: params.usagePurpose ?? "chamber_answer",
         usageIsFallback: true,
+        mayorGitHubToolMode: params.mayorGitHubToolMode,
       });
       console.info(
         `[chamber-fallback] chamber=${params.chamberRegistryId} primary=${primary.slug} failed → reserve=${reserve.slug} (free)`,

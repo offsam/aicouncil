@@ -58,6 +58,7 @@ import {
   loadMayorSharedMemory,
   scheduleMayorSharedMemoryUpdate,
 } from "./mayor-shared-memory";
+import { detectMayorGitHubToolRequest } from "./mayor-github-invoke";
 import { sanitizeUserFacingText, toUserFacingProviderError } from "./provider-user-error";
 import { assertAgentContextAccess } from "./security/agent-context-access";
 import { buildManagerSummaryPrompt } from "./agent-persona";
@@ -1406,6 +1407,7 @@ async function executeMayorTask(
         buildingRows,
         mayorPromptOptions,
       );
+      const mayorGitHubToolMode = detectMayorGitHubToolRequest(resolvedTaskText);
       const invoked = await invokeChamberAgentWithFreeFallback({
         chamberRegistryId: mayorChamberRegistryId,
         question: resolvedTaskText,
@@ -1417,6 +1419,7 @@ async function executeMayorTask(
         },
         systemPromptPrefix: buildMayorExecutiveSystemPrompt(buildingRows, mayorPromptOptions),
         mayorPromptParts,
+        mayorGitHubToolMode,
         forceError: options?.forceMayorInvokeError,
         maxTokens: 4096,
         conversationHistory: modelHistory,

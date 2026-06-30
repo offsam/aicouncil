@@ -11,6 +11,10 @@ import {
   computeMayorContextBudget,
   logMayorContextBudget,
 } from "./mayor-context-budget";
+import {
+  invokeMayorWithGitHubTools,
+  type MayorGitHubToolMode,
+} from "./mayor-github-invoke";
 import { ProviderInvokeError } from "./provider-user-error";
 
 function truncate(text: string, max: number): string {
@@ -37,6 +41,8 @@ export type InvokeAgentParams = {
   /** llm_usage_logs.purpose */
   usagePurpose?: string;
   usageIsFallback?: boolean;
+  /** Mayor GitHub tool loop — only for code_audit / coding_task (GITHUB-CONNECTOR-V1). */
+  mayorGitHubToolMode?: MayorGitHubToolMode | null;
 };
 
 /**
@@ -95,6 +101,20 @@ export async function invokeAgentForWorkflow(params: InvokeAgentParams): Promise
   console.info(
     `[invoke-agent] agent=${runtimeConfig.agentId} provider=${runtimeConfig.provider} model=${runtimeConfig.modelId}`,
   );
+
+  if (params.mayorGitHubToolMode && runtimeConfig.provider === "anthropic") {
+    return invokeMayorWithGitHubTools({
+      modelId: runtimeConfig.modelId,
+      systemPrompt,
+      question: params.question,
+      maxTokens: params.maxTokens,
+      conversationHistory: params.conversationHistory,
+      usagePurpose: params.usagePurpose ?? "mayor_answer",
+      usageIsFallback: params.usageIsFallback,
+      anthropicSystemBlocks,
+      toolMode: params.mayorGitHubToolMode,
+    });
+  }
 
   return callConfiguredAgentProvider({
     config: runtimeConfig,
