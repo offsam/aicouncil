@@ -61,6 +61,15 @@ const CODE_AUDIT_PATTERNS = [
   /\bcode\s+audit\b/i,
   /\bнайди\b.+\b(в\s+коде|файл|где)\b/i,
   /\busage\s+logging\b/i,
+  /\bпроверь.+код/i,
+  /\bпроверь.+\bgithub\b/i,
+  /\bcheck\b.+\b(code|github|repo)\b/i,
+  /где\s+(формируется|вызывается|создаётся|делается)/i,
+  /\bwhere\s+(is|does|are).+\b(formed|called|created|invoked|initialized)\b/i,
+  /найди.+\bgithub\b/i,
+  /\b(look|search)\b.+\bgithub\b/i,
+  /\bgithub\b.+(?:код|файл|где|\bpipeline\b|\bcall\b|\bfunction\b)/i,
+  /(?:код|файл|\bpipeline\b|\bcall\b|\bfunction\b).+\bgithub\b/i,
 ];
 
 /** Heuristic gate for GitHub tool path — mirrors Mayor prompt classification without changing it. */
