@@ -306,6 +306,7 @@ export async function invokeMayorWithGitHubTools(params: {
         : params.systemPrompt || undefined;
 
     let messages = buildInitialMessages(params.question, params.conversationHistory ?? []);
+    let lastUsage: unknown = null;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       const iterationNumber = iteration + 1;
@@ -318,6 +319,7 @@ export async function invokeMayorWithGitHubTools(params: {
         usageIsFallback: params.usageIsFallback,
         iteration: iterationNumber,
       });
+      lastUsage = data.usage ?? lastUsage;
 
       if (data.stop_reason !== "tool_use") {
         const answer = extractTextAnswer(data.content);
@@ -359,6 +361,11 @@ export async function invokeMayorWithGitHubTools(params: {
             })),
           ),
         },
+        {
+          role: "user",
+          content:
+            "You have received GitHub tool results. Stop calling tools unless absolutely necessary. Provide a final answer now with concrete file paths and findings.",
+        },
       ];
     }
 
@@ -367,10 +374,10 @@ export async function invokeMayorWithGitHubTools(params: {
       finalStopReason: "max_iterations",
       hasTextResponse: false,
     });
-    throw new ProviderInvokeError(
-      "anthropic",
-      params.modelId,
-      `GitHub tool loop exceeded ${MAX_TOOL_ITERATIONS} iterations`,
+    void lastUsage;
+    return (
+      "GitHub tools выполнились, но модель не завершила финальный ответ за 3 итерации. " +
+      "Проверь Vercel logs [mayor-github] для последних tool calls."
     );
   } catch (error) {
     console.error("[mayor-github] unhandled error", {
