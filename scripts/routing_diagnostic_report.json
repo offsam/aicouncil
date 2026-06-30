@@ -1,58 +1,68 @@
 {
-  "ranAt": "2026-06-28T02:58:38.410Z",
-  "pass": 27,
-  "fail": 2,
+  "ranAt": "2026-06-29T19:06:19.258Z",
+  "pass": 32,
+  "fail": 1,
   "ambiguous": 1,
-  "total": 30,
+  "total": 34,
   "createdEntities": {
     "buildings": [
       {
         "label": "t_Кактусовая_Лавка",
-        "id": "f83e317c-d4f3-44f3-a47e-88fa76135453",
+        "id": "8716e878-718e-4476-809e-861c868aa1e6",
         "chambers": [
           {
             "name": "t_Кактусовая_Лавка_Менеджер",
-            "registryId": "8eff3441-a548-4d75-bf10-621bbd1f6d20",
-            "chamberId": "4e9417cd-dd56-482f-8cc6-b86cd34a2c84"
+            "registryId": "7db09953-8190-40d3-869c-61727efaf140",
+            "chamberId": "cd78a0fc-3177-4e39-8dc0-8d523ca2a45b"
           },
           {
             "name": "t_Бухгалтерия",
-            "registryId": "9441321f-fafa-42ca-8eed-14c0867b4778",
-            "chamberId": "b2ef1217-5653-4ea1-8b5a-2bf4da75bd66"
+            "registryId": "736eb421-d7d1-481e-9855-2683729ce9e7",
+            "chamberId": "8fc4aee2-19c8-48e6-a0a2-c0fbb516f44b"
           },
           {
             "name": "t_Кружка",
-            "registryId": "06d19641-b4ea-4544-85f1-e9381599d26f",
-            "chamberId": "a109d7a5-3ce2-4aee-a578-86987c8df101"
+            "registryId": "e541f43b-9c86-4588-8e3d-ffe4998f4378",
+            "chamberId": "2c1a4f43-441a-4090-a7e3-a7634717a405"
           }
         ]
       },
       {
         "label": "t_Пустышка",
-        "id": "b6e284d2-8c55-4203-aa6e-997bfa08c64a",
+        "id": "085cf802-e195-4d72-a75a-58c270c925b2",
         "chambers": [
           {
             "name": "t_Пустышка_Менеджер",
-            "registryId": "6a860038-022f-4f95-aea8-d6dbd50e79b8",
-            "chamberId": "4fc2aa40-452e-4b47-ba60-4689c30fa63b"
+            "registryId": "47a77313-b769-496e-b1e9-f6faedab606f",
+            "chamberId": "fc30bc5e-0b2a-4831-a3d3-d001d74bd3c3"
           }
         ]
       }
     ],
     "freeOnlyChamber": {
-      "chamberId": "51e3d6f5-93a9-4bdb-a663-85a3ec52d111",
-      "registryId": "fd5538ad-df4f-494f-af96-e6528132f5e7",
+      "chamberId": "6af54bf4-ff5b-4801-8760-9f706fe49571",
+      "registryId": "2e9694d9-244e-487b-9579-a77eae571d1f",
       "name": "t_ТолькоФри_Башня_Менеджер",
       "routingRole": "main"
     },
     "knowledgeEntryIds": [
-      "2e05dc2e-7f8e-483c-9814-2a4f5d7c768a",
-      "3a523e83-78bd-4ec5-90e0-b9cebd064fc1",
-      "2183e691-44b2-4cc0-b6c9-2ea21a67566a"
+      "1a99dad0-5918-4a19-8a9c-19b1ee4a91f3",
+      "3d7504b0-320a-4be6-bafe-6fd125acf960",
+      "a1b45646-8430-4727-a988-7df65d9b601f"
     ],
-    "connectionId": "ef5ac449-324a-4360-97d2-b15336b5cdcd"
+    "connectionId": "2486d246-5175-49b8-97f8-6f868abbcbde"
   },
   "buildingAudit": [
+    {
+      "id": "f7a5bd42-6ef5-4784-a53e-035b4dd56f83",
+      "name": "AI Cousil",
+      "chamberCount": 0,
+      "internalCount": 0,
+      "agentCount": 0,
+      "knowledgeCount": 0,
+      "connectionCount": 0,
+      "note": "sparse — insufficient for full integration test"
+    },
     {
       "id": "7cbdbc8a-502c-4494-a9da-c86ba8776da0",
       "name": "CARZ",
@@ -66,9 +76,9 @@
     {
       "id": "9afd85bf-ce54-4c8b-bc78-c2ff7fcd9a57",
       "name": "Citizly",
-      "chamberCount": 3,
-      "internalCount": 2,
-      "agentCount": 10,
+      "chamberCount": 4,
+      "internalCount": 3,
+      "agentCount": 11,
       "knowledgeCount": 0,
       "connectionCount": 1,
       "note": "protected — read-only routing checks only"
@@ -76,9 +86,9 @@
     {
       "id": "aa5c2d68-cf23-4290-b9fa-3f83446c1a4f",
       "name": "City Hall",
-      "chamberCount": 5,
-      "internalCount": 4,
-      "agentCount": 5,
+      "chamberCount": 6,
+      "internalCount": 5,
+      "agentCount": 14,
       "knowledgeCount": 0,
       "connectionCount": 11,
       "note": "protected — read-only routing checks only"
@@ -118,7 +128,7 @@
       "name": "Библиотека",
       "chamberCount": 3,
       "internalCount": 2,
-      "agentCount": 3,
+      "agentCount": 7,
       "knowledgeCount": 0,
       "connectionCount": 1,
       "note": "usable"
@@ -126,39 +136,39 @@
     {
       "id": "cdf056fc-4552-48ca-a581-27345a13f7ea",
       "name": "Больничка",
-      "chamberCount": 1,
-      "internalCount": 1,
-      "agentCount": 0,
+      "chamberCount": 3,
+      "internalCount": 2,
+      "agentCount": 3,
       "knowledgeCount": 0,
       "connectionCount": 1,
-      "note": "sparse — insufficient for full integration test"
+      "note": "usable"
     },
     {
       "id": "99de1d47-6c11-488f-8e98-3960a1a37d0f",
       "name": "Налоговая",
-      "chamberCount": 0,
-      "internalCount": 0,
-      "agentCount": 0,
+      "chamberCount": 3,
+      "internalCount": 2,
+      "agentCount": 15,
       "knowledgeCount": 0,
       "connectionCount": 1,
-      "note": "sparse — insufficient for full integration test"
+      "note": "usable"
     },
     {
       "id": "24a2fb7e-d8ce-47c9-a402-6dbb8976c0c3",
       "name": "Ресторан",
-      "chamberCount": 0,
-      "internalCount": 0,
-      "agentCount": 0,
+      "chamberCount": 3,
+      "internalCount": 2,
+      "agentCount": 3,
       "knowledgeCount": 0,
       "connectionCount": 1,
-      "note": "sparse — insufficient for full integration test"
+      "note": "usable"
     },
     {
       "id": "a1000000-0000-4000-8000-000000000001",
       "name": "Технический отдел",
       "chamberCount": 1,
       "internalCount": 0,
-      "agentCount": 7,
+      "agentCount": 8,
       "knowledgeCount": 0,
       "connectionCount": 1,
       "note": "protected — read-only routing checks only"
@@ -186,39 +196,39 @@
       "expected": "target=a1000000-0000-4000-8000-000000000001; matchedBy=structure_command",
       "actual": "action=delegate, matchedBy=structure_command, target=a1000000-0000-4000-8000-000000000001, conf=1",
       "status": "PASS",
-      "notes": "Structure mutation command detected before semantic routing — delegate to Tech Department"
+      "notes": "Structure mutation command detected by deterministic system gate — delegate to Tech Department"
     },
     {
       "category": "Mayor routing",
       "name": "structure_command_llm slang",
-      "expected": "target=a1000000-0000-4000-8000-000000000001; matchedBy=structure_command_llm",
-      "actual": "action=delegate, matchedBy=structure_command_llm, target=a1000000-0000-4000-8000-000000000001, conf=1",
+      "expected": "deterministic gate null → Mayor agent decides (MR-2)",
+      "actual": "null",
       "status": "PASS",
-      "notes": "Structure mutation command detected by LLM semantic gate — delegate to Tech Department"
+      "notes": "Semantic routing is exercised by configured Mayor agent, not resolveRoutingDecision"
     },
     {
       "category": "Mayor routing",
       "name": "semantic lawyers",
-      "expected": "target=99a8efff-d39d-4130-8553-7dada4c07b1a; matchedBy=semantic",
-      "actual": "action=delegate, matchedBy=semantic, target=99a8efff-d39d-4130-8553-7dada4c07b1a, conf=0.8",
+      "expected": "deterministic gate null → Mayor agent decides (MR-2)",
+      "actual": "null",
       "status": "PASS",
-      "notes": "The user's question about a court date is related to legal matters, which is handled by the ЮРИСТЫ building."
+      "notes": "Semantic routing is exercised by configured Mayor agent, not resolveRoutingDecision"
     },
     {
       "category": "Mayor routing",
       "name": "explicit_name Citizly (read-only)",
-      "expected": "not a1000000-0000-4000-8000-000000000001; action=delegate",
-      "actual": "action=delegate, matchedBy=explicit_name, target=9afd85bf-ce54-4c8b-bc78-c2ff7fcd9a57, conf=1",
+      "expected": "deterministic gate null → Mayor agent decides (MR-2)",
+      "actual": "null",
       "status": "PASS",
-      "notes": "User explicitly mentioned the building name 'Citizly' in the context of a troubleshooting question"
+      "notes": "Semantic routing is exercised by configured Mayor agent, not resolveRoutingDecision"
     },
     {
       "category": "Mayor routing",
       "name": "diagnose not tech",
-      "expected": "not a1000000-0000-4000-8000-000000000001",
-      "actual": "action=delegate, matchedBy=explicit_name, target=9afd85bf-ce54-4c8b-bc78-c2ff7fcd9a57, conf=1",
+      "expected": "deterministic gate null → Mayor agent decides (MR-2)",
+      "actual": "null",
       "status": "PASS",
-      "notes": "User explicitly mentioned the building name 'Citizly' in the context of a troubleshooting question"
+      "notes": "Semantic routing is exercised by configured Mayor agent, not resolveRoutingDecision"
     },
     {
       "category": "Mayor routing",
@@ -226,31 +236,31 @@
       "expected": "target=a1000000-0000-4000-8000-000000000001; matchedBy=structure_command",
       "actual": "action=delegate, matchedBy=structure_command, target=a1000000-0000-4000-8000-000000000001, conf=1",
       "status": "PASS",
-      "notes": "Structure mutation command detected before semantic routing — delegate to Tech Department"
+      "notes": "Structure mutation command detected by deterministic system gate — delegate to Tech Department"
     },
     {
       "category": "Mayor routing",
       "name": "typo structure slang",
-      "expected": "target=a1000000-0000-4000-8000-000000000001",
-      "actual": "action=delegate, matchedBy=structure_command_llm, target=a1000000-0000-4000-8000-000000000001, conf=1",
+      "expected": "deterministic gate null → Mayor agent decides (MR-2)",
+      "actual": "null",
       "status": "PASS",
-      "notes": "Structure mutation command detected by LLM semantic gate — delegate to Tech Department"
+      "notes": "Semantic routing is exercised by configured Mayor agent, not resolveRoutingDecision"
     },
     {
       "category": "Manager routing",
       "name": "delegate t_Бухгалтерия",
-      "expected": "delegate → 9441321f",
-      "actual": "action=delegate target=9441321f-fafa-42ca-8eed-14c0867b4778 conf=0.9",
+      "expected": "delegate → 736eb421",
+      "actual": "action=delegate target=736eb421-d7d1-481e-9855-2683729ce9e7 conf=0.9",
       "status": "PASS",
-      "notes": "User request mentions 'отчёт', 'балансу' and 'налогам', which are related to accounting tasks"
+      "notes": "The user's request matches the description of the t_Бухгалтерия department, which handles учет прода"
     },
     {
       "category": "Manager routing",
       "name": "delegate t_Кружка",
-      "expected": "delegate → 06d19641",
-      "actual": "action=delegate target=06d19641-b4ea-4544-85f1-e9381599d26f conf=0.9",
+      "expected": "delegate → e541f43b",
+      "actual": "action=delegate target=e541f43b-9c86-4588-8e3d-ffe4998f4378 conf=0.9",
       "status": "PASS",
-      "notes": "User request mentions 'керамической кружки 300мл', which matches the description of the t_Кружка dep"
+      "notes": "The user's request matches the description of the t_Кружка department."
     },
     {
       "category": "Manager routing",
@@ -263,7 +273,7 @@
       "category": "Manager routing",
       "name": "conflict dual topic",
       "expected": "delegate to one internal chamber OR answer_self with low confidence",
-      "actual": "action=delegate target=9441321f-fafa-42ca-8eed-14c0867b4778 conf=0.8",
+      "actual": "action=delegate target=736eb421-d7d1-481e-9855-2683729ce9e7 conf=0.8",
       "status": "AMBIGUOUS",
       "notes": "Dual-topic routing is LLM-dependent; both outcomes may be valid"
     },
@@ -283,6 +293,20 @@
     },
     {
       "category": "Tech Department intent",
+      "name": "code audit file",
+      "expected": "code_audit",
+      "actual": "code_audit",
+      "status": "PASS"
+    },
+    {
+      "category": "Tech Department intent",
+      "name": "runtime diagnose logs",
+      "expected": "diagnose",
+      "actual": "diagnose",
+      "status": "PASS"
+    },
+    {
+      "category": "Tech Department intent",
       "name": "conflict diagnose wins",
       "expected": "diagnose",
       "actual": "diagnose",
@@ -292,8 +316,8 @@
       "category": "Tech Department intent",
       "name": "conflict structure wins",
       "expected": "structure",
-      "actual": "diagnose",
-      "status": "FAIL"
+      "actual": "structure",
+      "status": "PASS"
     },
     {
       "category": "Tech Department intent",
@@ -397,9 +421,24 @@
     },
     {
       "category": "Debate",
+      "name": "live cycle (fast tier)",
+      "expected": "closedReason confirmed OR attempts_exhausted",
+      "actual": "closedReason=confirmed rounds=2",
+      "status": "PASS",
+      "notes": "Council chamber: free"
+    },
+    {
+      "category": "Debate",
+      "name": "outcome confirmed",
+      "expected": "closedReason=confirmed",
+      "actual": "confirmed",
+      "status": "PASS"
+    },
+    {
+      "category": "Debate",
       "name": "runAgentDebate",
       "expected": "completes without throw",
-      "actual": "Chamber «Совет города» не найден в City Hall",
+      "actual": "Provider returned error",
       "status": "FAIL"
     }
   ]

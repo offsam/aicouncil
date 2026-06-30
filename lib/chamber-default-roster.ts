@@ -6,6 +6,7 @@ import {
   agentCategoryFromSpecialization,
   getModelCatalog,
 } from "@/lib/model-catalog/build-catalog";
+import { pickPreferredCatalogModelForTier, pickPreferredPoolAgent } from "@/lib/model-catalog/default-chamber-roster-picks";
 import { defaultAgentLocalPosition } from "@/lib/workspace/agent-layout";
 
 /** One agent per tier — required for Fast / Team / Council / Turbo modes. */
@@ -19,18 +20,23 @@ export type SeededChamberAgent = {
   source: "pool" | "catalog";
 };
 
-function pickRandom<T>(items: T[]): T | null {
-  if (items.length === 0) return null;
-  return items[Math.floor(Math.random() * items.length)] ?? null;
-}
+type PoolAgent = {
+  id: string;
+  name: string;
+  office_id: string | null;
+  provider: string | null;
+  model_id: string | null;
+};
 
 async function listAgentsByTier(
   supabase: SupabaseClient,
-): Promise<Map<CostTier, Array<{ id: string; name: string; office_id: string | null }>>> {
-  const { data, error } = await supabase.from("agents").select("id, name, office_id, cost_tier");
+): Promise<Map<CostTier, PoolAgent[]>> {
+  const { data, error } = await supabase
+    .from("agents")
+    .select("id, name, office_id, cost_tier, provider, model_id");
   if (error) throw new Error(error.message);
 
-  const byTier = new Map<CostTier, Array<{ id: string; name: string; office_id: string | null }>>();
+  const byTier = new Map<CostTier, PoolAgent[]>();
   for (const tier of DEFAULT_CHAMBER_ROSTER_TIERS) {
     byTier.set(tier, []);
   }
@@ -38,7 +44,13 @@ async function listAgentsByTier(
   for (const row of data ?? []) {
     const tier = normalizeCostTier(row.cost_tier);
     const bucket = byTier.get(tier) ?? [];
-    bucket.push({ id: row.id, name: row.name, office_id: row.office_id });
+    bucket.push({
+      id: row.id,
+      name: row.name,
+      office_id: row.office_id,
+      provider: row.provider ?? null,
+      model_id: row.model_id ?? null,
+    });
     byTier.set(tier, bucket);
   }
 
@@ -50,8 +62,7 @@ async function findOrCreateCatalogAgent(
   tier: CostTier,
 ): Promise<{ id: string; name: string; office_id: string | null } | null> {
   const catalog = await getModelCatalog();
-  const models = catalog.filter((model) => model.costTier === tier);
-  const picked = pickRandom(models);
+  const picked = pickPreferredCatalogModelForTier(catalog, tier);
   if (!picked) return null;
 
   const { data: existing } = await supabase
@@ -89,9 +100,9 @@ async function findOrCreateCatalogAgent(
 async function resolveAgentForTier(
   supabase: SupabaseClient,
   tier: CostTier,
-  pool: Map<CostTier, Array<{ id: string; name: string; office_id: string | null }>>,
+  pool: Map<CostTier, PoolAgent[]>,
 ): Promise<{ agent: { id: string; name: string; office_id: string | null }; source: "pool" | "catalog" } | null> {
-  const fromPool = pickRandom(pool.get(tier) ?? []);
+  const fromPool = pickPreferredPoolAgent(pool.get(tier) ?? [], tier);
   if (fromPool) return { agent: fromPool, source: "pool" };
 
   const fromCatalog = await findOrCreateCatalogAgent(supabase, tier);
@@ -101,8 +112,9 @@ async function resolveAgentForTier(
 }
 
 /**
- * Assigns one random agent per cost tier when a chamber is created.
- * Reuses agents from the global pool; creates from catalog only if a tier is empty.
+ * Assigns one preferred agent per cost tier when a chamber is created.
+ * Prefers popular brands (Claude, GPT, Gemini, Groq, Qwen, …) from the pool;
+ * creates from catalog only if a tier is empty.
  */
 export async function seedDefaultChamberRoster(
   supabase: SupabaseClient,

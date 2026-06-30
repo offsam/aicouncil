@@ -21,6 +21,13 @@ export type CatalogBandSource =
   | "explicit:gemini-pro"
   | "explicit:gemini-flash"
   | "explicit:deepseek-chat-v3"
+  | "explicit:openrouter-free-router"
+  | "explicit:gpt-oss-120b"
+  | "explicit:qwen3-coder-flash"
+  | "explicit:mistral-medium-3.1"
+  | "explicit:mistral-small-3.1"
+  | "explicit:grok-4"
+  | "explicit:claude-fable-latest"
   | "catalog:price_threshold_cheap"
   | "catalog:price_threshold_mid"
   | "catalog:price_threshold_premium"
@@ -84,6 +91,41 @@ const EXPLICIT_MODEL_BAND_RULES: ExplicitBandRule[] = [
     source: "explicit:deepseek-chat-v3",
     band: "mid",
     test: (_, id) => /\bdeepseek-chat\b|\bdeepseek-v3\b/i.test(id),
+  },
+  {
+    source: "explicit:openrouter-free-router",
+    band: "free",
+    test: (_, id) => id === "openrouter/free",
+  },
+  {
+    source: "explicit:gpt-oss-120b",
+    band: "mid",
+    test: (_, id) => /\bgpt-oss-120b\b/i.test(id),
+  },
+  {
+    source: "explicit:qwen3-coder-flash",
+    band: "cheap",
+    test: (_, id) => /\bqwen3-coder-flash\b/i.test(id),
+  },
+  {
+    source: "explicit:mistral-medium-3.1",
+    band: "mid",
+    test: (_, id) => /\bmistral-medium-3\.1(?:\b|$|-)/i.test(id),
+  },
+  {
+    source: "explicit:mistral-small-3.1",
+    band: "cheap",
+    test: (_, id) => /\bmistral-small-3\.1(?:\b|$|-)/i.test(id),
+  },
+  {
+    source: "explicit:grok-4",
+    band: "premium",
+    test: (_, id) => /\bgrok-4(?:\.|-)/i.test(id),
+  },
+  {
+    source: "explicit:claude-fable-latest",
+    band: "premium",
+    test: (_, id) => /\bclaude-fable-latest\b/i.test(id),
   },
 ];
 

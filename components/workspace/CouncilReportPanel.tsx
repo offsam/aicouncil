@@ -23,12 +23,14 @@ export function CouncilReportPanel({ council }: { council: CouncilExecutionPaylo
       data-testid="workspace-council-report-panel"
       className="mt-2 space-y-2 rounded border border-amber-800/50 bg-stone-950/70 p-2"
     >
-      <ExecutionResultBanner
-        status={status}
-        compact
-        className="mb-1"
-        dataTestId={council.partial ? "workspace-council-partial-badge" : undefined}
-      />
+      {status.kind !== "full_success" && (
+        <ExecutionResultBanner
+          status={status}
+          compact
+          className="mb-1"
+          dataTestId={council.partial ? "workspace-council-partial-badge" : undefined}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-semibold text-amber-300">Council Report</span>

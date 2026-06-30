@@ -66,34 +66,67 @@ async function resolveRoleConfig(
   return { role, config: defaultHardcodedRoleConfig() };
 }
 
+export type InvokeCheapLLMResult = {
+  answer: string;
+  provider: SystemLlmProvider;
+  modelUsed: string;
+  slot: "primary" | "fallback";
+};
+
+type SlotInvokerOverride = (
+  params: InvokeCheapLLMParams,
+  slot: "primary" | "fallback",
+) => Promise<InvokeCheapLLMResult>;
+
+let slotInvokerOverride: SlotInvokerOverride | null = null;
+
+/** Test hook for verify scripts — not used in production paths. */
+export function setInvokeCheapLLMSlotOverrideForTests(override: SlotInvokerOverride | null): void {
+  slotInvokerOverride = override;
+}
+
+/** Single provider slot call (no automatic cross-slot fallback). */
+export async function invokeCheapLLMSlot(
+  params: InvokeCheapLLMParams,
+  slot: "primary" | "fallback",
+): Promise<InvokeCheapLLMResult> {
+  if (slotInvokerOverride) {
+    return slotInvokerOverride(params, slot);
+  }
+
+  const { purpose, prompt, responseFormat = "text", temperature = 0.1, maxTokens, officeId } =
+    params;
+  const { role, config } = await resolveRoleConfig(purpose, officeId);
+  const roleTag = role ?? "unknown";
+  const provider = slot === "primary" ? config.primaryProvider : config.fallbackProvider;
+  const model = slot === "primary" ? config.primaryModel : config.fallbackModel;
+
+  const { answer, modelUsed } = await invokeConfiguredProvider(provider, model, {
+    prompt,
+    responseFormat,
+    temperature,
+    maxTokens,
+  });
+  console.info(
+    `[invokeCheapLLM] purpose=${purpose} role=${roleTag} slot=${slot} provider=${provider} model=${modelUsed}`,
+  );
+  return { answer, provider, modelUsed, slot };
+}
+
 /**
  * Unified cheap LLM: primary provider/model (with provider pool fallback), then fallback provider/model.
  * Per-office overrides via system_llm_roles when officeId is provided; otherwise hardcoded defaults.
+ * Returns answer text only; use invokeCheapLLMSlot when caller needs provider/model metadata.
  */
 export async function invokeCheapLLM(params: InvokeCheapLLMParams): Promise<string> {
-  const {
-    purpose,
-    prompt,
-    responseFormat = "text",
-    temperature = 0.1,
-    maxTokens,
-    officeId,
-  } = params;
-
+  const { purpose, officeId } = params;
   const { role, config } = await resolveRoleConfig(purpose, officeId);
   const roleTag = role ?? "unknown";
 
   let primaryError: string | undefined;
   try {
-    const { answer, modelUsed } = await invokeConfiguredProvider(
-      config.primaryProvider,
-      config.primaryModel,
-      { prompt, responseFormat, temperature, maxTokens },
-    );
-    console.info(
-      `[invokeCheapLLM] purpose=${purpose} role=${roleTag} provider=${config.primaryProvider} model=${modelUsed}`,
-    );
-    return answer;
+    const result = await invokeCheapLLMSlot(params, "primary");
+    return result.answer;
   } catch (err) {
     primaryError = err instanceof Error ? err.message : String(err);
     console.warn(
@@ -103,15 +136,8 @@ export async function invokeCheapLLM(params: InvokeCheapLLMParams): Promise<stri
 
   let fallbackError: string | undefined;
   try {
-    const { answer, modelUsed } = await invokeConfiguredProvider(
-      config.fallbackProvider,
-      config.fallbackModel,
-      { prompt, responseFormat, temperature, maxTokens },
-    );
-    console.info(
-      `[invokeCheapLLM] purpose=${purpose} role=${roleTag} provider=${config.fallbackProvider} model=${modelUsed}`,
-    );
-    return answer;
+    const result = await invokeCheapLLMSlot(params, "fallback");
+    return result.answer;
   } catch (err) {
     fallbackError = err instanceof Error ? err.message : String(err);
     console.warn(

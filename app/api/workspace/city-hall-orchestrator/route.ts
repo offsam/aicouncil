@@ -16,11 +16,10 @@ export async function GET(request: Request) {
   try {
     const officeIdParam = new URL(request.url).searchParams.get("officeId");
     const officeId = await requireWorkspaceOfficeId(officeIdParam);
-    const [orchestrator, debateResolution] = await Promise.all([
+    const [orchestrator, byTier] = await Promise.all([
       resolveCityHallMainAgent(officeId),
       resolveCityHallDebateChambersByTier(officeId),
     ]);
-    const { byTier, legacyCouncil } = debateResolution;
     const tierCounts = debateTierCountsFromChambers(byTier);
     const debateConfigured = isDebateTierConfigured(byTier);
 
@@ -30,7 +29,6 @@ export async function GET(request: Request) {
         debateConfigured,
         tierCounts,
         debateChambersByTier: byTier,
-        legacyCouncil,
       });
     }
     return NextResponse.json({
@@ -39,7 +37,6 @@ export async function GET(request: Request) {
       debateConfigured,
       tierCounts,
       debateChambersByTier: byTier,
-      legacyCouncil,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Server error";

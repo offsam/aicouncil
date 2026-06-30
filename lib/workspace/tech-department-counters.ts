@@ -1,4 +1,8 @@
 import type { TechDepartmentStats } from "@/lib/tech-department-stats";
+import {
+  AGENT_COUNT_LABEL_CITY_DEPLOYED,
+  AGENT_COUNT_LABEL_CITY_DEPLOYED_EXCLUDING_TECH,
+} from "@/lib/agent-count-labels";
 
 export type TechCounterTone =
   | "violet"
@@ -21,9 +25,17 @@ export type TechDepartmentCounterDef = {
 export const TECH_DEPARTMENT_COUNTER_CATALOG: TechDepartmentCounterDef[] = [
   {
     id: "deployed",
-    label: "на постах",
+    label: AGENT_COUNT_LABEL_CITY_DEPLOYED,
+    shortLabel: "на постах (город)",
     pick: (s) => s.deployedAgents,
     tone: "violet",
+  },
+  {
+    id: "deployed_excluding_tech",
+    label: AGENT_COUNT_LABEL_CITY_DEPLOYED_EXCLUDING_TECH,
+    shortLabel: "без техотдела",
+    pick: (s) => s.deployedAgentsExcludingTechDept,
+    tone: "muted",
   },
   {
     id: "available",
@@ -122,7 +134,7 @@ export const TECH_DEPARTMENT_COUNTER_CATALOG: TechDepartmentCounterDef[] = [
   {
     id: "free_agents",
     label: "free",
-    shortLabel: "на постах",
+    shortLabel: "tier",
     pick: (s) => s.freeTierDeployed,
     tone: "ok",
   },

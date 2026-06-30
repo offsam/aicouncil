@@ -139,6 +139,7 @@ import {
   type SelectionResolveContext,
 } from "@/lib/workspace/selection";
 import { workspaceAssignmentNodeId } from "@/lib/workspace/agent-nodes";
+import { workspaceConnectionUrl } from "@/lib/workspace/workspace-bff-paths";
 import { syncWorkspaceUndoSnapshot } from "@/lib/workspace/sync-workspace-undo";
 import {
   cloneWorkspaceUndoSnapshot,
@@ -502,7 +503,7 @@ export function WorkspaceCanvas({
         }),
       );
       try {
-        const res = await fetch(`/api/connections/${connectionId}`, {
+        const res = await fetch(workspaceConnectionUrl(connectionId), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ route_path: routePath }),
@@ -742,7 +743,7 @@ export function WorkspaceCanvas({
   const deleteConnection = useCallback(
     async (connectionId: string) => {
       pushWorkspaceUndoRef.current();
-      const res = await fetch(`/api/connections/${connectionId}`, { method: "DELETE" });
+      const res = await fetch(workspaceConnectionUrl(connectionId), { method: "DELETE" });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? "Connection delete failed");
@@ -1907,7 +1908,7 @@ export function WorkspaceCanvas({
 
     for (const target of targets) {
       if (target.kind === "connection") {
-        const res = await fetch(`/api/connections/${target.connectionId}`, {
+        const res = await fetch(workspaceConnectionUrl(target.connectionId), {
           method: "DELETE",
         });
         if (!res.ok) {
@@ -2519,7 +2520,7 @@ export function WorkspaceCanvas({
 
   const setConnectionColor = useCallback(
     async (connectionId: string, paletteId: BuildingAccentId) => {
-      const res = await fetch(`/api/connections/${connectionId}`, {
+      const res = await fetch(workspaceConnectionUrl(connectionId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ color: paletteId }),

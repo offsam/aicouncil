@@ -4,17 +4,21 @@ import {
   getModelCatalog,
   groupCatalogByCategory,
 } from "@/lib/model-catalog/build-catalog";
+import { sortCatalogModelsForDisplay } from "@/lib/model-catalog/popular-models";
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const specialization = url.searchParams.get("specialization");
     const costTier = url.searchParams.get("cost_tier");
+    const gateway = url.searchParams.get("gateway");
     const query = url.searchParams.get("q");
     const grouped = url.searchParams.get("grouped") === "1";
 
     const all = await getModelCatalog();
-    const models = filterCatalogModels(all, { specialization, costTier, query });
+    const models = sortCatalogModelsForDisplay(
+      filterCatalogModels(all, { specialization, costTier, gateway, query }),
+    );
 
     if (grouped) {
       return NextResponse.json({

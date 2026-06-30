@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import type { ChamberRow, OfficeObjectRow } from "@/lib/office-types";
-import { isCityHallBuilding, resolveCanonicalCityHallBuilding } from "./city-hall-building";
+import { resolveMainChamberForBuilding } from "./graph-identity";
+import { requireCityHallBuildingId } from "./graph-identity-required";
 
 export type CityHallOrchestrator = {
   chamberRegistryId: string;
@@ -13,35 +13,16 @@ export type CityHallOrchestrator = {
 export async function resolveCityHallMainAgent(
   officeId: string,
 ): Promise<CityHallOrchestrator | null> {
+  const buildingId = await requireCityHallBuildingId(officeId);
+
+  const main = await resolveMainChamberForBuilding(buildingId);
+  if (!main?.chamberRegistryId) return null;
+
   const supabase = getSupabaseAdmin();
-
-  const { data: buildings } = await supabase
-    .from("office_objects")
-    .select("id, label, created_at")
-    .eq("office_id", officeId)
-    .eq("object_type", "room");
-
-  const cityHallIds = (buildings ?? []).filter(isCityHallBuilding).map((b) => b.id);
-  let chamberRows: ChamberRow[] = [];
-  if (cityHallIds.length > 0) {
-    const { data: chambers } = await supabase
-      .from("chambers")
-      .select("id, building_object_id, building_entity_id")
-      .in("building_object_id", cityHallIds);
-    chamberRows = (chambers ?? []) as ChamberRow[];
-  }
-
-  const cityHall = resolveCanonicalCityHallBuilding(
-    (buildings ?? []) as OfficeObjectRow[],
-    chamberRows,
-  );
-  if (!cityHall) return null;
-
   const { data: chamber } = await supabase
     .from("chambers")
     .select("id, name, entity_registry_id, manager_agent_id")
-    .eq("building_object_id", cityHall.id)
-    .eq("routing_role", "main")
+    .eq("id", main.chamberId)
     .maybeSingle();
 
   if (!chamber?.entity_registry_id) return null;

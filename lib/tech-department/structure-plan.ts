@@ -1,12 +1,158 @@
 import { getSupabaseAdmin } from "../supabase/admin";
 import { requireExternalEntryOfficeId } from "../workspace/graph-identity-required";
-import { invokeCheapLLM } from "../cheap-llm";
+import { invokeCheapLLMSlot, type InvokeCheapLLMParams } from "../cheap-llm";
+import {
+  defaultHardcodedRoleConfig,
+  loadSystemLlmRoleConfig,
+  type SystemLlmRoleConfig,
+} from "../system-llm-roles";
 import {
   analyzeDestructiveStructureImpact,
   persistStructureBeforeSnapshot,
 } from "./structure-impact";
 import type { StructureAction, StructurePlanKind, TechStructurePlan } from "./structure-types";
 import { planHasDestructiveActions } from "./structure-types";
+
+const RETRYABLE_PLANNER_VALIDATION_MESSAGES = new Set([
+  "Planner returned empty action list",
+  "Planner returned placeholder-only actions",
+  "Planner did not return JSON",
+  "Destructive planner did not return JSON",
+]);
+
+export function isRetryablePlannerValidationError(error: Error): boolean {
+  return RETRYABLE_PLANNER_VALIDATION_MESSAGES.has(error.message);
+}
+
+export function structurePlannerValidationRetryReason(error: Error): string {
+  switch (error.message) {
+    case "Planner returned empty action list":
+      return "empty_action_list_retry";
+    case "Planner returned placeholder-only actions":
+      return "placeholder_only_retry";
+    case "Planner did not return JSON":
+    case "Destructive planner did not return JSON":
+      return "no_json_retry";
+    default:
+      return "schema_validation_retry";
+  }
+}
+
+type PlannerParseSuccess = { ok: true; summary: string; actions: StructureAction[] };
+type PlannerParseFailure = { ok: false; validationError: Error };
+type PlannerParseOutcome = PlannerParseSuccess | PlannerParseFailure;
+
+async function loadPlannerRoleConfig(officeId: string): Promise<SystemLlmRoleConfig> {
+  const loaded = await loadSystemLlmRoleConfig(officeId, "planner");
+  return loaded ?? defaultHardcodedRoleConfig();
+}
+
+async function invokeStructurePlannerWithValidationRetry(params: {
+  purpose: "tech-structure-plan" | "tech-structure-plan-destructive";
+  prompt: string;
+  officeId: string;
+  parseResponse: (responseText: string) => PlannerParseOutcome;
+}): Promise<{ summary: string; actions: StructureAction[] }> {
+  const llmParams: InvokeCheapLLMParams = {
+    purpose: params.purpose,
+    prompt: params.prompt,
+    responseFormat: "json",
+    officeId: params.officeId,
+  };
+
+  const roleConfig = await loadPlannerRoleConfig(params.officeId);
+  const primaryResult = await invokeCheapLLMSlot(llmParams, "primary");
+  const primaryParsed = params.parseResponse(primaryResult.answer);
+  if (primaryParsed.ok) {
+    return { summary: primaryParsed.summary, actions: primaryParsed.actions };
+  }
+
+  const firstValidationError = primaryParsed.validationError;
+  if (!isRetryablePlannerValidationError(firstValidationError)) {
+    throw firstValidationError;
+  }
+
+  if (roleConfig.primaryProvider === roleConfig.fallbackProvider) {
+    throw firstValidationError;
+  }
+
+  const retryReason = structurePlannerValidationRetryReason(firstValidationError);
+  console.info(
+    `[structure-plan] ${retryReason} purpose=${params.purpose} primaryProvider=${primaryResult.provider} primaryModel=${primaryResult.modelUsed} retrySlot=fallback`,
+  );
+
+  const fallbackResult = await invokeCheapLLMSlot(llmParams, "fallback");
+  const fallbackParsed = params.parseResponse(fallbackResult.answer);
+  if (fallbackParsed.ok) {
+    console.info(
+      `[structure-plan] validation_retry_succeeded purpose=${params.purpose} fallbackProvider=${fallbackResult.provider} fallbackModel=${fallbackResult.modelUsed}`,
+    );
+    return { summary: fallbackParsed.summary, actions: fallbackParsed.actions };
+  }
+
+  throw firstValidationError;
+}
+
+function parseCreatePlannerResponse(responseText: string): PlannerParseOutcome {
+  const jsonMatch = responseText.trim().match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return { ok: false, validationError: new Error("Planner did not return JSON") };
+  }
+
+  let parsed: { summary?: string; actions?: unknown };
+  try {
+    parsed = JSON.parse(jsonMatch[0]) as { summary?: string; actions?: unknown };
+  } catch (err) {
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+
+  try {
+    const actions = parseCreateActions(parsed.actions);
+    assertConfirmableStructureActions(actions);
+    const summary =
+      String(parsed.summary ?? "").trim() ||
+      `План из ${actions.length} шагов:\n${formatActionList(actions)}`;
+    return { ok: true, summary, actions };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (isRetryablePlannerValidationError(error)) {
+      return { ok: false, validationError: error };
+    }
+    throw error;
+  }
+}
+
+function parseDestructivePlannerResponse(responseText: string): PlannerParseOutcome {
+  const jsonMatch = responseText.trim().match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return { ok: false, validationError: new Error("Destructive planner did not return JSON") };
+  }
+
+  let parsed: { summary?: string; actions?: unknown };
+  try {
+    parsed = JSON.parse(jsonMatch[0]) as { summary?: string; actions?: unknown };
+  } catch (err) {
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+
+  try {
+    const actions = parseDestructiveActions(parsed.actions);
+    assertConfirmableStructureActions(actions);
+    if (!planHasDestructiveActions(actions)) {
+      throw new Error("Destructive planner returned no destructive actions");
+    }
+    const summary =
+      String(parsed.summary ?? "").trim() ||
+      `План удаления (${actions.length} шагов):\n${formatActionList(actions)}`;
+    return { ok: true, summary, actions };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (isRetryablePlannerValidationError(error)) {
+      return { ok: false, validationError: error };
+    }
+    throw error;
+  }
+}
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -245,24 +391,12 @@ ${(agents ?? []).map((a) => `- ${a.id} ${a.name} (${a.provider})`).join("\n")}
 
 User command: "${taskText.replace(/"/g, '\\"')}"`;
 
-  const responseText = await invokeCheapLLM({
+  const { summary, actions } = await invokeStructurePlannerWithValidationRetry({
     purpose: "tech-structure-plan",
     prompt,
-    responseFormat: "json",
     officeId,
+    parseResponse: parseCreatePlannerResponse,
   });
-  const jsonMatch = responseText.trim().match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Planner did not return JSON");
-  }
-
-  const parsed = JSON.parse(jsonMatch[0]) as { summary?: string; actions?: unknown };
-  const actions = parseCreateActions(parsed.actions);
-  assertConfirmableStructureActions(actions);
-
-  const summary =
-    String(parsed.summary ?? "").trim() ||
-    `План из ${actions.length} шагов:\n${formatActionList(actions)}`;
 
   const { planId, expiresAt } = await storeStructurePlan({
     taskText,
@@ -338,28 +472,12 @@ ${(agents ?? []).map((a) => `- ${a.id} ${a.name}`).join("\n")}
 
 User command: "${taskText.replace(/"/g, '\\"')}"`;
 
-  const responseText = await invokeCheapLLM({
+  const { summary, actions } = await invokeStructurePlannerWithValidationRetry({
     purpose: "tech-structure-plan-destructive",
     prompt,
-    responseFormat: "json",
     officeId,
+    parseResponse: parseDestructivePlannerResponse,
   });
-  const jsonMatch = responseText.trim().match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Destructive planner did not return JSON");
-  }
-
-  const parsed = JSON.parse(jsonMatch[0]) as { summary?: string; actions?: unknown };
-  const actions = parseDestructiveActions(parsed.actions);
-  assertConfirmableStructureActions(actions);
-
-  if (!planHasDestructiveActions(actions)) {
-    throw new Error("Destructive planner returned no destructive actions");
-  }
-
-  const summary =
-    String(parsed.summary ?? "").trim() ||
-    `План удаления (${actions.length} шагов):\n${formatActionList(actions)}`;
 
   const { planId, expiresAt } = await storeStructurePlan({
     taskText,

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DEFAULT_CHAMBER } from "@/lib/control-defaults";
-import { seedDefaultChamberRoster } from "@/lib/chamber-default-roster";
 import { resolveUniqueChamberSlug } from "@/lib/entity-registry-ensure";
 import { getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/admin";
 
@@ -111,17 +110,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: chamError?.message || "Failed to create chamber" }, { status: 500 });
     }
 
-    const defaultRoster = await seedDefaultChamberRoster(supabase, {
-      chamberId: chamber.id,
-      chamberRegistryId: registry.id,
-    });
-
     return NextResponse.json({
       chamber: {
         ...chamber,
         entity_registry: registry,
       },
-      default_roster: defaultRoster,
     }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Server error";

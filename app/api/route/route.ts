@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveRoute } from "@/lib/routing";
 import { resolveAgentIdsForTarget, GENERAL_INTAKE_ID } from "@/lib/route-agent-ids";
 import { isSupabaseConfigured } from "@/lib/supabase/admin";
+import { requireExternalEntryOfficeId } from "@/lib/workspace/graph-identity-required";
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,8 +18,9 @@ export async function POST(request: NextRequest) {
     const question = body.question?.trim() || "";
     const fileExtension = body.fileExtension?.trim();
     const sourceEntityId = body.sourceEntityId?.trim() || undefined;
+    const officeId = await requireExternalEntryOfficeId();
 
-    const decision = await resolveRoute(question, fileExtension, sourceEntityId);
+    const decision = await resolveRoute(question, fileExtension, sourceEntityId, officeId);
     const chosenTargetId = decision.targets[0]?.entityRegistryId || GENERAL_INTAKE_ID;
     const selectedAgentIds = await resolveAgentIdsForTarget(chosenTargetId);
 

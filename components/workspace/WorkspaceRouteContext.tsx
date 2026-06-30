@@ -548,7 +548,7 @@ export function WorkspaceRouteProvider({ children }: { children: ReactNode }) {
           ? roster
           : [];
       const rosterAgentIds = actualRoster.map((a) => a.id);
-      applyLiveRouteFromDecision(decision, targetName, true, rosterAgentIds);
+      applyLiveRouteFromDecision(decision, targetName, false, rosterAgentIds);
       setExecutionProgress((prev) => {
         if (!prev) return null;
         const rosterForSlots =
@@ -680,39 +680,8 @@ export function WorkspaceRouteProvider({ children }: { children: ReactNode }) {
       );
       if (!resolved?.steps.length) return null;
 
-      const rosterAgentIds =
-        result.council?.agents.map((a) => a.agentId) ??
-        result.team?.agents.map((a) => a.agentId) ??
-        result.fast?.agents.map((a) => a.agentId) ??
-        (result.agentId ? [result.agentId] : []);
-
-      const plan = buildRouteAnimationPlan(
-        result,
-        lookupRef.current.chambers,
-        lookupRef.current.buildings,
-        lookupRef.current.assignments,
-        mayorOriginRef.current,
-        rosterAgentIds,
-      );
-
       stopWorkflowReplay();
-      setRouteHighlight((prev) => ({
-        steps: plan?.steps ?? resolved!.steps,
-        connectionIds: plan?.connectionIds ?? resolved!.connectionIds,
-        animationSegments: plan?.segments ?? prev?.animationSegments,
-        fading: prev?.fading ?? false,
-        signalActive: prev?.signalActive ?? false,
-        signalPhase: prev?.signalPhase,
-        signalTone: prev?.signalTone,
-        activeStepIndex: prev?.activeStepIndex,
-        activeSegmentIndex: prev?.activeSegmentIndex,
-        litSegmentIndices: prev?.litSegmentIndices,
-        signalDirection: prev?.signalDirection,
-        activeConnectionId:
-          prev?.activeConnectionId ?? plan?.connectionIds[0] ?? resolved!.connectionIds[0],
-      }));
-
-      return plan?.steps ?? resolved!.steps;
+      return resolved.steps;
     },
     [stopWorkflowReplay],
   );

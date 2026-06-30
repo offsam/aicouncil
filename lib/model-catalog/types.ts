@@ -8,6 +8,16 @@ export type ModelGateway =
   | "google"
   | "deepseek";
 
+/** Gateways shown in the agent picker provider filter (display order). */
+export const GATEWAY_FILTER_ORDER: ModelGateway[] = [
+  "openrouter",
+  "anthropic",
+  "openai",
+  "google",
+  "groq",
+  "deepseek",
+];
+
 export type ModelSpecialization =
   | "code"
   | "analysis"

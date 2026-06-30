@@ -2,7 +2,12 @@ import {
   appendKnowledgeToPromptParts,
   buildKnowledgeRefsFromRows,
 } from "./knowledge/knowledge-context";
+import {
+  assertAgentAssignedToChamberRegistry,
+  assertAgentContextAccess,
+} from "./security/agent-context-access";
 import { getSupabaseAdmin, isSupabaseConfigured } from "./supabase/admin";
+import { requireExternalEntryOfficeId } from "./workspace/graph-identity-required";
 import type {
   EntityRegistryRow,
   ChamberRow,
@@ -211,6 +216,7 @@ async function buildRegistryChainForContext(
       chamberId = (await defaultChamberRegistryForAgent(entityRegistryId)) ?? undefined;
     }
     if (chamberId) {
+      await assertAgentAssignedToChamberRegistry(entityRegistryId, chamberId);
       const chamberChain = await traverseUpRegistry(chamberId);
       chamberChain.reverse();
       if (!chamberChain.some((r) => r.id === entityRegistryId)) {
@@ -545,9 +551,17 @@ export async function getAgentContextPrompt(routePath: string, body: any): Promi
       console.warn(`Registry ID not found for agent slug: ${slug}`);
       return "";
     }
-    
+
+    const officeId = await requireExternalEntryOfficeId();
+    const chamberRegistryId = body?.chamberRegistryId ?? body?.chamberId;
+    await assertAgentContextAccess({
+      officeId,
+      agentId: data.id,
+      chamberRegistryId: typeof chamberRegistryId === "string" ? chamberRegistryId : undefined,
+    });
+
     const context = await buildContext(data.id, {
-      chamberRegistryId: body?.chamberRegistryId ?? body?.chamberId,
+      chamberRegistryId: typeof chamberRegistryId === "string" ? chamberRegistryId : undefined,
       taskText: typeof body?.question === "string" ? body.question : undefined,
     });
     return context.flattenedPrompt;

@@ -29,20 +29,7 @@ async function agentsAssignedToChamber(chamberId: string, agentIds: string[]): P
 }
 
 async function main() {
-  const { byTier, legacyCouncil } = await resolveCityHallDebateChambersByTier();
-
-  if (legacyCouncil) {
-    console.log(
-      "NOTICE: legacy «Совет города» still in DB — slug:",
-      legacyCouncil.slug,
-      "registry:",
-      legacyCouncil.chamberRegistryId,
-      "agents:",
-      legacyCouncil.agentCount,
-    );
-  } else {
-    console.log("NOTICE: legacy «Совет города» not found in City Hall");
-  }
+  const byTier = await resolveCityHallDebateChambersByTier();
 
   console.log("\n=== Tier chamber resolution ===");
   let pairPass = true;

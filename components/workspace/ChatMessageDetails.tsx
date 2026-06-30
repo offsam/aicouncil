@@ -10,11 +10,7 @@ export function ChatMessageDetails({ message }: { message: StoredChatMessage }) 
   if (message.role !== "assistant") return null;
 
   const showExecutionStatus =
-    message.executionStatus &&
-    (message.executionStatus.kind !== "full_success" ||
-      message.fast ||
-      message.team ||
-      message.council);
+    message.executionStatus && message.executionStatus.kind !== "full_success";
 
   const hasDetails =
     message.meta ||

@@ -11,6 +11,7 @@ import {
 } from "./resolve-origin-provider";
 import type { CatalogCategoryBlock, CatalogModel, ModelGateway } from "./types";
 import { SPECIALIZATION_META, SPECIALIZATION_ORDER } from "./types";
+import { sortCatalogModelsForDisplay } from "./popular-models";
 
 type RawModel = {
   gateway: ModelGateway;
@@ -47,7 +48,7 @@ export function groupCatalogByCategory(models: CatalogModel[]): CatalogCategoryB
     id,
     label: SPECIALIZATION_META[id].label,
     hint: SPECIALIZATION_META[id].hint,
-    models: models.filter((m) => m.primarySpecialization === id),
+    models: sortCatalogModelsForDisplay(models.filter((m) => m.primarySpecialization === id)),
   })).filter((block) => block.models.length > 0);
 }
 
@@ -56,10 +57,12 @@ export function filterCatalogModels(
   opts: {
     specialization?: string | null;
     costTier?: string | null;
+    gateway?: string | null;
     query?: string | null;
   },
 ): CatalogModel[] {
   const q = opts.query?.trim().toLowerCase();
+  const gateway = opts.gateway?.trim().toLowerCase();
   return models.filter((model) => {
     if (opts.specialization && !model.specializations.includes(opts.specialization as never)) {
       return false;
@@ -67,8 +70,12 @@ export function filterCatalogModels(
     if (opts.costTier && model.costTier !== opts.costTier) {
       return false;
     }
+    if (gateway && model.gateway !== gateway) {
+      return false;
+    }
     if (q) {
-      const hay = `${model.displayName} ${model.modelId} ${model.originProvider}`.toLowerCase();
+      const hay =
+        `${model.displayName} ${model.modelId} ${model.originProvider} ${model.gateway}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;

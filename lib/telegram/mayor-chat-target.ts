@@ -1,4 +1,4 @@
-import { resolveProductionOfficeId } from "@/lib/workspace/resolve-production-office";
+import { requireExternalEntryOfficeId } from "@/lib/workspace/graph-identity-required";
 import { resolveCityHallMainAgent } from "@/lib/workspace/city-hall-orchestrator";
 
 export type MayorChatTarget = {
@@ -11,8 +11,7 @@ export type MayorChatTarget = {
 
 /** Mayor agent + City Hall main chamber for Telegram / external chat bridges. */
 export async function resolveMayorChatTarget(): Promise<MayorChatTarget | null> {
-  const officeId = await resolveProductionOfficeId();
-  if (!officeId) return null;
+  const officeId = await requireExternalEntryOfficeId();
 
   const mayor = await resolveCityHallMainAgent(officeId);
   if (!mayor) return null;

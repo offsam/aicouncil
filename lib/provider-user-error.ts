@@ -1,3 +1,8 @@
+import {
+  CONTEXT_ACCESS_DENIED_PUBLIC_MESSAGE,
+  isContextAccessDeniedError,
+} from "./security/agent-context-access";
+
 /** Plain-language user message — never expose provider/model/quota details. */
 export const PROVIDER_UNAVAILABLE_USER_MESSAGE =
   "Сейчас я не смог получить ответ от модели. Попробуйте ещё раз через минуту.";
@@ -29,6 +34,9 @@ const DELEGATION_CONFIG_PATTERN =
 
 /** Map chat/delegation failures to safe user-facing text (provider + graph config gaps). */
 export function toUserFacingChatError(err: unknown): string {
+  if (isContextAccessDeniedError(err)) {
+    return CONTEXT_ACCESS_DENIED_PUBLIC_MESSAGE;
+  }
   if (err instanceof Error) {
     if (DELEGATION_CONFIG_PATTERN.test(err.message)) {
       return BUILDING_NOT_CONFIGURED_USER_MESSAGE;
@@ -41,8 +49,17 @@ export function toUserFacingChatError(err: unknown): string {
   return toUserFacingProviderError(err);
 }
 
+/** HTTP status for unified chat / ask endpoints. */
+export function chatErrorHttpStatus(err: unknown): number {
+  if (isContextAccessDeniedError(err)) return 403;
+  return 500;
+}
+
 /** Map any provider failure to a safe user-facing message; preserve detail in logs only. */
 export function toUserFacingProviderError(err: unknown): string {
+  if (isContextAccessDeniedError(err)) {
+    return CONTEXT_ACCESS_DENIED_PUBLIC_MESSAGE;
+  }
   if (err instanceof ProviderInvokeError) {
     return err.userMessage;
   }

@@ -13,7 +13,6 @@ import { WorkspaceRouteProvider } from "@/components/workspace/WorkspaceRouteCon
 import { WorkspaceSelectionProvider } from "@/components/workspace/WorkspaceSelectionContext";
 import { WorkspaceTopMissionBar } from "@/components/workspace/WorkspaceTopMissionBar";
 import { WorkspaceBottomActivityLog } from "@/components/workspace/WorkspaceBottomActivityLog";
-import { WorkspaceTaskToastHost } from "@/components/workspace/WorkspaceTaskToastHost";
 
 function WorkspaceLayout({
   officeId,
@@ -35,7 +34,6 @@ function WorkspaceLayout({
                 techDepartmentBuildingId={techDepartmentBuildingId}
               />
             </ReactFlowProvider>
-            <WorkspaceTaskToastHost />
             <WorkspaceMayorChat />
           </main>
           <WorkspaceInspector />

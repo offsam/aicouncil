@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/admin";
 import { processTask } from "@/lib/workflow-orchestrator";
 import { GENERAL_INTAKE_ID, resolveAgentIdsForTarget } from "@/lib/route-agent-ids";
+import { requireExternalEntryOfficeId } from "@/lib/workspace/graph-identity-required";
 
 export async function GET() {
   if (!isSupabaseConfigured()) {
@@ -45,7 +46,8 @@ export async function POST(request: NextRequest) {
     }
 
     const sourceEntityId = body.sourceEntityId?.trim() || undefined;
-    const result = await processTask(taskText, sourceEntityId);
+    const officeId = await requireExternalEntryOfficeId();
+    const result = await processTask(taskText, sourceEntityId, { officeId });
 
     if (result.mode === "workflow") {
       const supabase = getSupabaseAdmin();

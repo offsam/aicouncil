@@ -14,12 +14,14 @@ export function TeamAnswersPanel({ team }: { team: TeamExecutionPayload }) {
       data-testid="workspace-team-answers-panel"
       className="mt-2 space-y-2 rounded border border-stone-700 bg-stone-950/60 p-2"
     >
-      <ExecutionResultBanner
-        status={status}
-        compact
-        className="mb-1"
-        dataTestId={team.partial ? "workspace-team-partial-badge" : undefined}
-      />
+      {status.kind !== "full_success" && (
+        <ExecutionResultBanner
+          status={status}
+          compact
+          className="mb-1"
+          dataTestId={team.partial ? "workspace-team-partial-badge" : undefined}
+        />
+      )}
 
       <div className="space-y-1">
         <div className="flex flex-wrap items-center gap-2">

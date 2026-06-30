@@ -19,12 +19,15 @@ export type ProcessTaskResult =
 export async function processTask(
   taskText: string,
   sourceEntityId?: string,
+  options?: { officeId?: string },
 ): Promise<ProcessTaskResult> {
   if (!isSupabaseConfigured()) {
     throw new Error("Supabase не настроен");
   }
 
-  const { plan, routeDecision } = await planWorkflow(taskText, sourceEntityId);
+  const { plan, routeDecision } = await planWorkflow(taskText, sourceEntityId, {
+    officeId: options?.officeId,
+  });
 
   if (!plan.needsWorkflow || plan.steps.length < 2) {
     return { mode: "single", decision: routeDecision };

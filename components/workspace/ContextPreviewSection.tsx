@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { BuiltContext, ContextLayer } from "@/lib/office-types";
+import { workspaceAgentContextUrl } from "@/lib/workspace/workspace-bff-paths";
 import { useWorkspaceSelection } from "./WorkspaceSelectionContext";
 
 function layerSourceLabel(layer: ContextLayer): string {
@@ -49,10 +50,7 @@ export function ContextPreviewSection({
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ chamberRegistryId: effectiveChamberId });
-      const res = await fetch(
-        `/api/offices/${officeId}/agents/${agentId}/context?${params.toString()}`,
-      );
+      const res = await fetch(workspaceAgentContextUrl(officeId, agentId, effectiveChamberId));
       const data = (await res.json()) as BuiltContext & { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to load context");
       setContextData(data);

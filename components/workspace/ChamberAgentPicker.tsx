@@ -6,14 +6,19 @@ import {
   COST_TIER_LABEL,
   type CostTier,
 } from "@/lib/cost-tier";
-import type { CatalogCategoryBlock, CatalogModel } from "@/lib/model-catalog/types";
-import { SPECIALIZATION_META, SPECIALIZATION_ORDER } from "@/lib/model-catalog/types";
+import type { CatalogCategoryBlock, CatalogModel, ModelGateway } from "@/lib/model-catalog/types";
+import { GATEWAY_FILTER_ORDER, SPECIALIZATION_META, SPECIALIZATION_ORDER } from "@/lib/model-catalog/types";
 import { CostTierBadge } from "@/components/workspace/CostTierBadge";
 import {
   getAgentIconOption,
   originProviderToIconId,
   type AgentIconOption,
 } from "@/components/workspace/agent-icon-catalog";
+import {
+  isCatalogModelFeatured,
+  splitCatalogModelsByFeatured,
+} from "@/lib/model-catalog/popular-models";
+import { formatCatalogGatewayLabel } from "@/lib/model-catalog/resolve-origin-provider";
 
 type PickerPath = "choose" | "all" | "filter-spec" | "filter-tier" | "filter-results";
 
@@ -37,35 +42,102 @@ function renderIcon(option: AgentIconOption, className: string) {
   return <Icon className={className} strokeWidth={2} />;
 }
 
+function ProviderGatewayFilter({
+  value,
+  onChange,
+}: {
+  value: ModelGateway | null;
+  onChange: (gateway: ModelGateway | null) => void;
+}) {
+  return (
+    <div className="workspace-bubble-chip-row" data-testid="chamber-agent-picker-provider-filter">
+      <button
+        type="button"
+        className={`workspace-bubble-chip${value === null ? " workspace-bubble-chip--accent" : ""}`}
+        onClick={() => onChange(null)}
+        data-testid="chamber-agent-picker-gateway-all"
+      >
+        Все
+      </button>
+      {GATEWAY_FILTER_ORDER.map((gateway) => (
+        <button
+          key={gateway}
+          type="button"
+          className={`workspace-bubble-chip${value === gateway ? " workspace-bubble-chip--accent" : ""}`}
+          onClick={() => onChange(gateway)}
+          data-testid={`chamber-agent-picker-gateway-${gateway}`}
+        >
+          {formatCatalogGatewayLabel(gateway)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CatalogModelTile({
   model,
   disabled,
+  featured = false,
   onSelect,
 }: {
   model: CatalogModel;
   disabled?: boolean;
+  featured?: boolean;
   onSelect: (model: CatalogModel) => void;
 }) {
   const iconId = originProviderToIconId(model.originProviderSlug);
   const icon = getAgentIconOption(iconId);
   const color = icon.kind === "simple" ? icon.color : "currentColor";
+  const gatewayLabel = formatCatalogGatewayLabel(model.gateway);
 
   return (
     <button
       type="button"
       disabled={disabled}
       data-testid={`catalog-model-${model.key}`}
+      data-featured={featured ? "true" : undefined}
       onClick={() => onSelect(model)}
-      className="workspace-bubble-model-tile"
-      title={`${model.displayName} · ${model.originProvider} · ${COST_TIER_LABEL[model.costTier]}`}
+      className={`workspace-bubble-model-tile${featured ? " workspace-bubble-model-tile--featured" : ""}`}
+      title={`${model.displayName} (через ${gatewayLabel}) · ${model.originProvider} · ${COST_TIER_LABEL[model.costTier]}${featured ? " · популярная" : ""}`}
     >
       <span className="workspace-bubble-model-tile__icon" style={{ color }}>
         {renderIcon(icon, "h-5 w-5")}
       </span>
-      <span className="workspace-bubble-model-tile__name">{model.displayName}</span>
+      <span className="workspace-bubble-model-tile__name">
+        {model.displayName}
+        <span className="workspace-bubble-model-tile__via"> (через {gatewayLabel})</span>
+      </span>
       <span className="workspace-bubble-model-tile__origin">{model.originProvider}</span>
       <CostTierBadge tier={model.costTier} className="workspace-bubble-model-tile__tier" />
     </button>
+  );
+}
+
+function ModelGridSection({
+  models,
+  assigningKey,
+  featured = false,
+  onSelect,
+}: {
+  models: CatalogModel[];
+  assigningKey: string | null;
+  featured?: boolean;
+  onSelect: (model: CatalogModel) => void;
+}) {
+  if (models.length === 0) return null;
+
+  return (
+    <div className="workspace-bubble-model-grid">
+      {models.map((model) => (
+        <CatalogModelTile
+          key={model.key}
+          model={model}
+          featured={featured || isCatalogModelFeatured(model)}
+          disabled={assigningKey === model.key}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -82,16 +154,29 @@ function ModelGrid({
     return <p className="workspace-bubble-empty">Нет моделей по выбранным фильтрам</p>;
   }
 
+  const { featured, rest } = splitCatalogModelsByFeatured(models);
+
   return (
-    <div className="workspace-bubble-model-grid">
-      {models.map((model) => (
-        <CatalogModelTile
-          key={model.key}
-          model={model}
-          disabled={assigningKey === model.key}
-          onSelect={onSelect}
-        />
-      ))}
+    <div className="workspace-bubble-model-sections">
+      {featured.length > 0 && (
+        <section className="workspace-bubble-model-section">
+          <p className="workspace-bubble-model-section__label">Популярные</p>
+          <ModelGridSection
+            models={featured}
+            assigningKey={assigningKey}
+            featured
+            onSelect={onSelect}
+          />
+        </section>
+      )}
+      {rest.length > 0 && (
+        <section className="workspace-bubble-model-section">
+          {featured.length > 0 && (
+            <p className="workspace-bubble-model-section__label">Остальные</p>
+          )}
+          <ModelGridSection models={rest} assigningKey={assigningKey} onSelect={onSelect} />
+        </section>
+      )}
     </div>
   );
 }
@@ -107,22 +192,40 @@ function CategoryBlocks({
 }) {
   return (
     <div className="workspace-bubble-category-scroll">
-      {categories.map((block) => (
-        <section key={block.id} className="workspace-bubble-category-block">
-          <h4 className="workspace-bubble-category-block__title">{block.label}</h4>
-          <p className="workspace-bubble-category-block__hint">{block.hint}</p>
-          <div className="workspace-bubble-model-grid">
-            {block.models.map((model) => (
-              <CatalogModelTile
-                key={model.key}
-                model={model}
-                disabled={assigningKey === model.key}
-                onSelect={onSelect}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+      {categories.map((block) => {
+        const { featured, rest } = splitCatalogModelsByFeatured(block.models);
+        return (
+          <section key={block.id} className="workspace-bubble-category-block">
+            <h4 className="workspace-bubble-category-block__title">{block.label}</h4>
+            <p className="workspace-bubble-category-block__hint">{block.hint}</p>
+            <div className="workspace-bubble-model-sections">
+              {featured.length > 0 && (
+                <div className="workspace-bubble-model-section">
+                  <p className="workspace-bubble-model-section__label">Популярные</p>
+                  <ModelGridSection
+                    models={featured}
+                    assigningKey={assigningKey}
+                    featured
+                    onSelect={onSelect}
+                  />
+                </div>
+              )}
+              {rest.length > 0 && (
+                <div className="workspace-bubble-model-section">
+                  {featured.length > 0 && (
+                    <p className="workspace-bubble-model-section__label">Остальные</p>
+                  )}
+                  <ModelGridSection
+                    models={rest}
+                    assigningKey={assigningKey}
+                    onSelect={onSelect}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -142,6 +245,7 @@ export function ChamberAgentPicker({
   const [assignedKeys, setAssignedKeys] = useState<Set<string>>(new Set());
   const [filterSpec, setFilterSpec] = useState<string | null>(null);
   const [filterTier, setFilterTier] = useState<CostTier | null>(null);
+  const [filterGateway, setFilterGateway] = useState<ModelGateway | null>(null);
   const [assigningKey, setAssigningKey] = useState<string | null>(null);
 
   const loadAssignedKeys = useCallback(async () => {
@@ -171,6 +275,7 @@ export function ChamberAgentPicker({
     try {
       const params = new URLSearchParams({ grouped: "1" });
       if (search.trim()) params.set("q", search.trim());
+      if (filterGateway) params.set("gateway", filterGateway);
       const res = await fetch(`/api/model-catalog?${params.toString()}`);
       const body = (await res.json()) as {
         categories?: CatalogCategoryBlock[];
@@ -188,7 +293,7 @@ export function ChamberAgentPicker({
     } finally {
       setLoading(false);
     }
-  }, [excludeAssigned, search]);
+  }, [excludeAssigned, filterGateway, search]);
 
   const loadFiltered = useCallback(async () => {
     if (!filterSpec || !filterTier) return;
@@ -200,6 +305,7 @@ export function ChamberAgentPicker({
         cost_tier: filterTier,
       });
       if (search.trim()) params.set("q", search.trim());
+      if (filterGateway) params.set("gateway", filterGateway);
       const res = await fetch(`/api/model-catalog?${params.toString()}`);
       const body = (await res.json()) as { models?: CatalogModel[]; error?: string };
       if (!res.ok) throw new Error(body.error ?? "Не удалось загрузить каталог");
@@ -210,7 +316,7 @@ export function ChamberAgentPicker({
     } finally {
       setLoading(false);
     }
-  }, [excludeAssigned, filterSpec, filterTier, search]);
+  }, [excludeAssigned, filterGateway, filterSpec, filterTier, search]);
 
   useEffect(() => {
     void loadAssignedKeys();
@@ -245,6 +351,13 @@ export function ChamberAgentPicker({
     }
   }
 
+  function handleGatewayFilterChange(gateway: ModelGateway | null) {
+    setFilterGateway(gateway);
+    if (path === "choose") {
+      setPath("all");
+    }
+  }
+
   function goBackWithinPicker() {
     setError(null);
     if (path === "filter-tier") {
@@ -259,6 +372,7 @@ export function ChamberAgentPicker({
       setPath("choose");
       setFilterSpec(null);
       setFilterTier(null);
+      setFilterGateway(null);
       return;
     }
     onBack();
@@ -274,6 +388,10 @@ export function ChamberAgentPicker({
         data-testid="chamber-agent-picker-search"
       />
 
+      {path !== "filter-spec" && path !== "filter-tier" && (
+        <ProviderGatewayFilter value={filterGateway} onChange={handleGatewayFilterChange} />
+      )}
+
       {path === "choose" && (
         <div className="grid gap-2 sm:grid-cols-2">
           <button
@@ -285,7 +403,7 @@ export function ChamberAgentPicker({
           >
             <span className="workspace-bubble-option__label">Показать всех</span>
             <span className="workspace-bubble-option__hint">
-              Полный каталог, блоки по специализации (сначала Код)
+              Полный каталог: популярные сверху, блоки по специализации. Фильтр провайдера — выше.
             </span>
           </button>
           <button

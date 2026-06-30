@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CostTier } from "@/lib/cost-tier";
 import {
   buildDebateTierOptions,
@@ -25,19 +27,40 @@ export function DebateTierPicker({
   onCancel,
   onConfirm,
 }: DebateTierPickerProps) {
-  if (!open) return null;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
 
   const options = buildDebateTierOptions(debateChambersByTier);
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[1450] flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-[1500] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby="debate-picker-title"
       data-testid="workspace-debate-tier-picker"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
     >
-      <div className="w-full max-w-lg rounded-lg border border-violet-700/60 bg-stone-900 p-5 shadow-xl">
+      <div
+        className="w-full max-w-lg rounded-lg border border-violet-700/60 bg-stone-950 p-5 shadow-2xl ring-1 ring-white/10"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h3 id="debate-picker-title" className="text-base font-semibold text-violet-200">
           Спор между агентами
         </h3>
@@ -87,6 +110,7 @@ export function DebateTierPicker({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
