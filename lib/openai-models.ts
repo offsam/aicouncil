@@ -1,6 +1,8 @@
 import { parseOpenAIError } from "./api-types";
-import { callWithModelFallback } from "./provider-failover";
+import { buildOpenAiTokenLimitFields } from "./openai-token-limit";
+import { callWithModelFallback, type UsageLogMeta } from "./provider-failover";
 import { recordProviderFailure, recordProviderSuccess } from "./provider-failover-status";
+import { extractRawUsage } from "./tokens";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -25,7 +27,7 @@ async function callOpenAIOnce(
   model: string,
   prompt: string,
   opts: OpenAICallOpts = {},
-): Promise<{ ok: boolean; status: number; answer?: string; error?: string }> {
+): Promise<{ ok: boolean; status: number; answer?: string; error?: string; rawUsage?: unknown }> {
   const userContent =
     opts.responseFormat === "json" && !/\bjson\b/i.test(prompt)
       ? `${prompt}\n\nRespond with valid json.`
@@ -33,7 +35,7 @@ async function callOpenAIOnce(
 
   const body: Record<string, unknown> = {
     model,
-    max_tokens: opts.maxTokens ?? 2048,
+    ...buildOpenAiTokenLimitFields(model, opts.maxTokens ?? 2048),
     messages: [{ role: "user", content: userContent }],
   };
   if (opts.temperature !== undefined) {
@@ -53,11 +55,13 @@ async function callOpenAIOnce(
   });
 
   const data = await response.json();
+  const rawUsage = extractRawUsage("openai", data);
   if (!response.ok) {
     return {
       ok: false,
       status: response.status,
       error: parseOpenAIError(response.status, data),
+      rawUsage,
     };
   }
 
@@ -65,20 +69,22 @@ async function callOpenAIOnce(
     data as { choices?: Array<{ message?: { content?: string | null } }> }
   ).choices?.[0]?.message?.content?.trim();
   if (!answer) {
-    return { ok: false, status: 502, error: "OpenAI returned empty answer" };
+    return { ok: false, status: 502, error: "OpenAI returned empty answer", rawUsage };
   }
 
-  return { ok: true, status: response.status, answer };
+  return { ok: true, status: response.status, answer, rawUsage };
 }
 
 /** Try primary OpenAI model, then OPENAI_FALLBACK_POOL. */
 export async function callOpenAIWithFallback(
   primaryModel: string,
   prompt: string,
-  opts?: OpenAICallOpts,
+  opts?: OpenAICallOpts & { usageLog?: UsageLogMeta },
 ): Promise<{ answer: string; modelUsed: string }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
+
+  const { usageLog, ...callOpts } = opts ?? {};
 
   try {
     const result = await callWithModelFallback({
@@ -86,7 +92,8 @@ export async function callOpenAIWithFallback(
       primaryModel,
       fallbackPool: OPENAI_FALLBACK_POOL,
       isRetryable: isRetryableOpenAIFailure,
-      callOnce: (model) => callOpenAIOnce(apiKey, model, prompt, opts),
+      callOnce: (model) => callOpenAIOnce(apiKey, model, prompt, callOpts),
+      usageLog,
     });
     recordProviderSuccess("openai", primaryModel, result.modelUsed);
     return result;

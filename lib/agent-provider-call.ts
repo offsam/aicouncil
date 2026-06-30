@@ -1,9 +1,12 @@
 import { parseAnthropicError, parseDeepSeekError, parseOpenAIError } from "./api-types";
 import { callGeminiConfiguredModel } from "./gemini-models";
 import { callGroqConfiguredModel, type GroqMessage } from "./groq-models";
+import { insertLlmUsageLog } from "./llm-usage-log";
+import { buildOpenAiTokenLimitFields } from "./openai-token-limit";
 import { callOpenRouterConfiguredModel } from "./openrouter-free";
 import type { AgentRuntimeConfig } from "./agent-runtime-config";
 import { ProviderInvokeError } from "./provider-user-error";
+import { extractRawUsage } from "./tokens";
 
 type AgentProviderCallParams = {
   config: AgentRuntimeConfig;
@@ -12,6 +15,9 @@ type AgentProviderCallParams = {
   maxTokens?: number;
   /** Prior user/assistant turns for the same conversation (excludes current question). */
   conversationHistory?: MayorConversationTurn[];
+  /** llm_usage_logs.purpose — e.g. mayor_answer, manager_answer, agent_invoke. */
+  usagePurpose?: string;
+  usageIsFallback?: boolean;
 };
 
 type MayorConversationTurn = {
@@ -48,12 +54,18 @@ function anthropicMessages(
   ];
 }
 
+type ConfiguredCallMeta = {
+  purpose: string;
+  isFallback?: boolean;
+};
+
 async function callAnthropicConfigured(
   modelId: string,
   systemPrompt: string,
   question: string,
   maxTokens: number,
   conversationHistory: MayorConversationTurn[] = [],
+  meta?: ConfiguredCallMeta,
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -76,7 +88,18 @@ async function callAnthropicConfigured(
   });
 
   const data = await response.json();
+  const rawUsage = extractRawUsage("anthropic", data);
   if (!response.ok) {
+    if (rawUsage != null && meta?.purpose) {
+      await insertLlmUsageLog({
+        provider: "anthropic",
+        modelId,
+        purpose: meta.purpose,
+        rawUsage,
+        error: parseAnthropicError(response.status, data),
+        isFallback: meta.isFallback ?? false,
+      });
+    }
     throw new ProviderInvokeError(
       "anthropic",
       modelId,
@@ -91,6 +114,15 @@ async function callAnthropicConfigured(
   if (!answer) {
     throw new ProviderInvokeError("anthropic", modelId, "Anthropic returned empty answer");
   }
+  if (meta?.purpose) {
+    await insertLlmUsageLog({
+      provider: "anthropic",
+      modelId,
+      purpose: meta.purpose,
+      rawUsage: rawUsage ?? null,
+      isFallback: meta.isFallback ?? false,
+    });
+  }
   return answer;
 }
 
@@ -100,6 +132,7 @@ async function callOpenAIConfigured(
   question: string,
   maxTokens: number,
   conversationHistory: MayorConversationTurn[] = [],
+  meta?: ConfiguredCallMeta,
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -114,7 +147,7 @@ async function callOpenAIConfigured(
     },
     body: JSON.stringify({
       model: modelId,
-      max_tokens: maxTokens,
+      ...buildOpenAiTokenLimitFields(modelId, maxTokens),
       messages: providerMessages(systemPrompt, question, conversationHistory).map((m) => ({
         role: m.role,
         content: m.content,
@@ -123,7 +156,18 @@ async function callOpenAIConfigured(
   });
 
   const data = await response.json();
+  const rawUsage = extractRawUsage("openai", data);
   if (!response.ok) {
+    if (rawUsage != null && meta?.purpose) {
+      await insertLlmUsageLog({
+        provider: "openai",
+        modelId,
+        purpose: meta.purpose,
+        rawUsage,
+        error: parseOpenAIError(response.status, data),
+        isFallback: meta.isFallback ?? false,
+      });
+    }
     throw new ProviderInvokeError("openai", modelId, parseOpenAIError(response.status, data));
   }
 
@@ -132,6 +176,15 @@ async function callOpenAIConfigured(
   ).choices?.[0]?.message?.content?.trim();
   if (!answer) {
     throw new ProviderInvokeError("openai", modelId, "OpenAI returned empty answer");
+  }
+  if (meta?.purpose) {
+    await insertLlmUsageLog({
+      provider: "openai",
+      modelId,
+      purpose: meta.purpose,
+      rawUsage: rawUsage ?? null,
+      isFallback: meta.isFallback ?? false,
+    });
   }
   return answer;
 }
@@ -142,6 +195,7 @@ async function callDeepSeekConfigured(
   question: string,
   maxTokens: number,
   conversationHistory: MayorConversationTurn[] = [],
+  meta?: ConfiguredCallMeta,
 ): Promise<string> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
@@ -165,7 +219,18 @@ async function callDeepSeekConfigured(
   });
 
   const data = await response.json();
+  const rawUsage = extractRawUsage("deepseek", data);
   if (!response.ok) {
+    if (rawUsage != null && meta?.purpose) {
+      await insertLlmUsageLog({
+        provider: "deepseek",
+        modelId,
+        purpose: meta.purpose,
+        rawUsage,
+        error: parseDeepSeekError(response.status, data),
+        isFallback: meta.isFallback ?? false,
+      });
+    }
     throw new ProviderInvokeError(
       "deepseek",
       modelId,
@@ -179,6 +244,15 @@ async function callDeepSeekConfigured(
   if (!answer) {
     throw new ProviderInvokeError("deepseek", modelId, "DeepSeek returned empty answer");
   }
+  if (meta?.purpose) {
+    await insertLlmUsageLog({
+      provider: "deepseek",
+      modelId,
+      purpose: meta.purpose,
+      rawUsage: rawUsage ?? null,
+      isFallback: meta.isFallback ?? false,
+    });
+  }
   return answer;
 }
 
@@ -190,6 +264,11 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
   const maxTokens = params.maxTokens ?? 2048;
   const { config, systemPrompt, question, conversationHistory = [] } = params;
   const provider = config.provider;
+  const purpose = params.usagePurpose ?? "agent_invoke";
+  const meta: ConfiguredCallMeta = {
+    purpose,
+    isFallback: params.usageIsFallback ?? false,
+  };
 
   if (provider === "anthropic") {
     return callAnthropicConfigured(
@@ -198,6 +277,7 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
       question,
       maxTokens,
       conversationHistory,
+      meta,
     );
   }
 
@@ -208,6 +288,7 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
       question,
       maxTokens,
       conversationHistory,
+      meta,
     );
   }
 
@@ -218,6 +299,7 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
       question,
       maxTokens,
       conversationHistory,
+      meta,
     );
   }
 
@@ -226,7 +308,7 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
       const { answer } = await callGroqConfiguredModel(
         config.modelId,
         providerMessages(systemPrompt, question, conversationHistory),
-        { maxTokens },
+        { maxTokens, usagePurpose: purpose, usageIsFallback: params.usageIsFallback },
       );
       return answer;
     } catch (err) {
@@ -250,6 +332,8 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
         parts: [{ text: question }],
         systemPrompt: `${systemPrompt}${historyBlock}`.trim(),
         maxTokens,
+        usagePurpose: purpose,
+        usageIsFallback: params.usageIsFallback,
       });
       return answer;
     } catch (err) {
@@ -269,6 +353,8 @@ export async function callConfiguredAgentProvider(params: AgentProviderCallParam
     try {
       const { answer } = await callOpenRouterConfiguredModel(config.modelId, messages, {
         maxTokens,
+        usagePurpose: purpose,
+        usageIsFallback: params.usageIsFallback,
       });
       return answer;
     } catch (err) {
