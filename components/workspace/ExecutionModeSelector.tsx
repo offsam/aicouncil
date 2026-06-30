@@ -7,8 +7,10 @@ type ExecutionModeSelectorProps = {
   onChange: (mode: ExecutionMode) => void;
   teamDisabled: boolean;
   councilDisabled: boolean;
+  turboDisabled?: boolean;
   teamDisabledReason?: string;
   councilDisabledReason?: string;
+  turboDisabledReason?: string;
   compact?: boolean;
   layout?: "horizontal" | "sidebar" | "toolbar";
 };
@@ -18,8 +20,10 @@ export function ExecutionModeSelector({
   onChange,
   teamDisabled,
   councilDisabled,
+  turboDisabled = false,
   teamDisabledReason,
   councilDisabledReason,
+  turboDisabledReason,
   compact,
   layout = "horizontal",
 }: ExecutionModeSelectorProps) {
@@ -35,7 +39,7 @@ export function ExecutionModeSelector({
           ? "flex flex-col gap-0.5 rounded-lg border border-[var(--ws-panel-border)] bg-[var(--ws-panel-bg)] p-0.5"
           : isToolbar
             ? "inline-flex items-stretch gap-1 rounded-lg border border-[var(--ws-panel-border)] bg-[var(--ws-panel-bg)] p-1"
-            : `grid grid-cols-3 gap-1 rounded-lg border border-[var(--ws-panel-border)] bg-[var(--ws-panel-bg)] p-1 ${
+            : `grid grid-cols-4 gap-1 rounded-lg border border-[var(--ws-panel-border)] bg-[var(--ws-panel-bg)] p-1 ${
                 compact ? "text-[10px]" : ""
               }`
       }
@@ -44,13 +48,16 @@ export function ExecutionModeSelector({
         const selected = value === option.id;
         const disabled =
           (option.id === "team" && teamDisabled) ||
-          (option.id === "council" && councilDisabled);
+          (option.id === "council" && councilDisabled) ||
+          (option.id === "turbo" && turboDisabled);
         const title =
           option.id === "team" && teamDisabled
             ? teamDisabledReason
             : option.id === "council" && councilDisabled
               ? councilDisabledReason
-              : option.hint;
+              : option.id === "turbo" && turboDisabled
+                ? turboDisabledReason
+                : option.hint;
 
         return (
           <button
@@ -80,6 +87,14 @@ export function ExecutionModeSelector({
               {option.id === "council" && !disabled && (
                 <span
                   data-testid="workspace-execution-mode-council-badge"
+                  className="rounded bg-white/10 px-1 text-[9px] font-bold text-[var(--ws-text-secondary)]"
+                >
+                  $$
+                </span>
+              )}
+              {option.id === "turbo" && !disabled && (
+                <span
+                  data-testid="workspace-execution-mode-turbo-badge"
                   className="rounded bg-white/10 px-1 text-[9px] font-bold text-[var(--ws-text-secondary)]"
                 >
                   $$$

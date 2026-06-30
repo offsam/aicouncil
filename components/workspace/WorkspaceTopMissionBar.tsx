@@ -80,11 +80,13 @@ export function WorkspaceTopMissionBar() {
   const [mayorEligibilityState, setMayorEligibilityState] = useState<{
     teamEligible: boolean;
     councilEligible: boolean;
+    turboEligible: boolean;
   } | null>(null);
 
   const mayorEligibility = mayorEligibilityState ?? {
     teamEligible: true,
     councilEligible: true,
+    turboEligible: true,
   };
 
   const officeId = snapshot?.officeId ?? null;
@@ -117,15 +119,18 @@ export function WorkspaceTopMissionBar() {
         (data: {
           teamEligible?: boolean;
           councilEligible?: boolean;
+          turboEligible?: boolean;
         }) => {
         if (!cancelled) {
           if (
             typeof data.teamEligible === "boolean" &&
-            typeof data.councilEligible === "boolean"
+            typeof data.councilEligible === "boolean" &&
+            typeof data.turboEligible === "boolean"
           ) {
             setMayorEligibilityState({
               teamEligible: data.teamEligible,
               councilEligible: data.councilEligible,
+              turboEligible: data.turboEligible,
             });
           }
         }
@@ -222,8 +227,10 @@ export function WorkspaceTopMissionBar() {
             onChange={setExecutionMode}
             teamDisabled={!mayorEligibility.teamEligible}
             councilDisabled={!mayorEligibility.councilEligible}
-            teamDisabledReason="Нет cheap-агентов в City Hall"
-            councilDisabledReason="Нет mid-агентов в City Hall"
+            turboDisabled={!mayorEligibility.turboEligible}
+            teamDisabledReason="Нет cheap-агентов в городе (вне City Hall)"
+            councilDisabledReason="Нет mid-агентов в городе (вне City Hall)"
+            turboDisabledReason="Нет premium-агентов в городе (вне City Hall)"
             layout="toolbar"
             compact
           />

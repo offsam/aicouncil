@@ -233,6 +233,7 @@ export function WorkspaceMayorChat() {
   const [mayorModeEligibility, setMayorModeEligibility] = useState<{
     teamEligible: boolean;
     councilEligible: boolean;
+    turboEligible: boolean;
   } | null>(null);
   const [debateConfigured, setDebateConfigured] = useState(false);
   const [debatePickerOpen, setDebatePickerOpen] = useState(false);
@@ -304,7 +305,11 @@ export function WorkspaceMayorChat() {
 
   const mayorEligibility =
     target.kind === "mayor"
-      ? (mayorModeEligibility ?? { teamEligible: true, councilEligible: true })
+      ? (mayorModeEligibility ?? {
+          teamEligible: true,
+          councilEligible: true,
+          turboEligible: true,
+        })
       : null;
   const teamDisabled = mayorEligibility
     ? !mayorEligibility.teamEligible
@@ -312,11 +317,13 @@ export function WorkspaceMayorChat() {
   const councilDisabled = mayorEligibility
     ? !mayorEligibility.councilEligible
     : !councilRosterEligible;
+  const turboDisabled = mayorEligibility ? !mayorEligibility.turboEligible : false;
 
   useEffect(() => {
     if (teamDisabled && executionMode === "team") setExecutionMode("fast");
     if (councilDisabled && executionMode === "council") setExecutionMode("fast");
-  }, [teamDisabled, councilDisabled, executionMode, setExecutionMode]);
+    if (turboDisabled && executionMode === "turbo") setExecutionMode("fast");
+  }, [teamDisabled, councilDisabled, turboDisabled, executionMode, setExecutionMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -326,9 +333,10 @@ export function WorkspaceMayorChat() {
         (data: {
           configured?: boolean;
           debateConfigured?: boolean;
-          tierCounts?: Record<CostTier, number>;
+          debateTierCounts?: Record<CostTier, number>;
           teamEligible?: boolean;
           councilEligible?: boolean;
+          turboEligible?: boolean;
           debateChambersByTier?: CityHallDebateChambersByTier;
         } & Partial<CityHallOrchestrator>) => {
           if (cancelled) return;
@@ -343,16 +351,18 @@ export function WorkspaceMayorChat() {
           if (data.debateChambersByTier) {
             setDebateChambersByTier(data.debateChambersByTier);
           }
-          if (data.tierCounts) {
-            setDebateTierCounts(data.tierCounts);
+          if (data.debateTierCounts) {
+            setDebateTierCounts(data.debateTierCounts);
           }
           if (
             typeof data.teamEligible === "boolean" &&
-            typeof data.councilEligible === "boolean"
+            typeof data.councilEligible === "boolean" &&
+            typeof data.turboEligible === "boolean"
           ) {
             setMayorModeEligibility({
               teamEligible: data.teamEligible,
               councilEligible: data.councilEligible,
+              turboEligible: data.turboEligible,
             });
           }
           setDebateConfigured(Boolean(data.debateConfigured));
@@ -925,13 +935,16 @@ export function WorkspaceMayorChat() {
                 {EXECUTION_MODE_OPTIONS.map((option) => {
                   const disabled =
                     (option.id === "team" && teamDisabled) ||
-                    (option.id === "council" && councilDisabled);
+                    (option.id === "council" && councilDisabled) ||
+                    (option.id === "turbo" && turboDisabled);
                   const disabledReason =
                     option.id === "team" && teamDisabled
-                      ? "Нет cheap-агентов в City Hall (отдел $)"
+                      ? "Нет cheap-агентов в городе (вне City Hall)"
                       : option.id === "council" && councilDisabled
-                        ? "Нет mid-агентов в City Hall (отдел $$)"
-                        : undefined;
+                        ? "Нет mid-агентов в городе (вне City Hall)"
+                        : option.id === "turbo" && turboDisabled
+                          ? "Нет premium-агентов в городе (вне City Hall)"
+                          : undefined;
                   return (
                     <button
                       key={option.id}
