@@ -22,6 +22,8 @@ export const MAYOR_DELEGATE_TARGET_NOT_CONFIGURED_ANSWER =
 export type BuildMayorExecutiveSystemPromptOptions = {
   /** When false, Mayor must not return clarify (one-round cap enforced in code too). */
   clarifyAllowed?: boolean;
+  /** Office-scoped DB counts injected into Mayor prompt (MSA-1). */
+  officeSnapshot?: string | null;
 };
 
 function mayorRoutingRules(options?: BuildMayorExecutiveSystemPromptOptions): string {
@@ -86,7 +88,7 @@ export function buildMayorExecutiveSystemPrompt(
 
   return `[Mayor role — routing and response]
 ${mayorRoutingRules(options)}
-
+${options?.officeSnapshot?.trim() ? `\n${options.officeSnapshot.trim()}\n` : ""}
 Available buildings:
 ${buildingList}`;
 }

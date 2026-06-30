@@ -1,5 +1,4 @@
 import { computeAgentStatus } from "./agent-status";
-import { AI_COUNCIL_OFFICE_ID } from "./ai-council-ids";
 import {
   getFallbackSwitchCounts,
   listProviderHealth,
@@ -7,14 +6,21 @@ import {
 } from "./provider-failover-status";
 import { getSupabaseAdmin, isSupabaseConfigured } from "./supabase/admin";
 import {
-  TECH_DEPARTMENT_BUILDING_ID,
-  TECH_DEPARTMENT_MONITORING_CHAMBER_ID,
-} from "./workspace/tech-department";
+  computeOfficeInventoryCounts,
+  loadOfficeDeployedAgentRows,
+} from "./office-inventory-counts";
+import {
+  requireExternalEntryOfficeId,
+  requireTechDepartmentBuildingId,
+} from "./workspace/graph-identity-required";
 
 export const MONITORED_PROVIDER_TAGS = ["gemini", "groq", "openrouter"] as const;
 
 export type TechDepartmentStats = {
+  /** Unique agents on posts city-wide — same scope as Mayor agentsDeployedCount (MSA-1.3). */
   deployedAgents: number;
+  /** Internal metric: deployed excluding Technical Department building chambers. */
+  deployedAgentsExcludingTechDept: number;
   availableAgents: number;
   onFallbackAgents: number;
   unavailableAgents: number;
@@ -57,50 +63,8 @@ function classifyAgent(
   return computeAgentStatus({ provider }) === "online" ? "available" : "unavailable";
 }
 
-type DeployedAgentRow = { id: string; provider: string; costTier: string | null };
-
 function todayUtcIsoStart(): string {
   return `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
-}
-
-async function loadDeployedAgents(): Promise<DeployedAgentRow[]> {
-  if (!isSupabaseConfigured()) return [];
-
-  const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
-    .from("agent_assignments")
-    .select(
-      "agent_id, agents!inner(id, provider, cost_tier), chambers!inner(id, building_object_id)",
-    );
-
-  if (error || !data) return [];
-
-  const byAgentId = new Map<string, DeployedAgentRow>();
-
-  for (const row of data) {
-    const rawAgent = row.agents as
-      | { id: string; provider: string; cost_tier: string | null }
-      | { id: string; provider: string; cost_tier: string | null }[]
-      | null;
-    const rawChamber = row.chambers as
-      | { id: string; building_object_id: string | null }
-      | { id: string; building_object_id: string | null }[]
-      | null;
-    const agent = Array.isArray(rawAgent) ? rawAgent[0] : rawAgent;
-    const chamber = Array.isArray(rawChamber) ? rawChamber[0] : rawChamber;
-    if (!agent?.id || !chamber) continue;
-    if (chamber.id === TECH_DEPARTMENT_MONITORING_CHAMBER_ID) continue;
-    if (chamber.building_object_id === TECH_DEPARTMENT_BUILDING_ID) continue;
-    if (!byAgentId.has(agent.id)) {
-      byAgentId.set(agent.id, {
-        id: agent.id,
-        provider: agent.provider,
-        costTier: agent.cost_tier,
-      });
-    }
-  }
-
-  return [...byAgentId.values()];
 }
 
 function countProviderBuckets(healthByTag: Map<string, ProviderHealthStatus>): {
@@ -129,16 +93,28 @@ function countProviderBuckets(healthByTag: Map<string, ProviderHealthStatus>): {
 }
 
 export async function computeTechDepartmentStats(): Promise<TechDepartmentStats> {
+  const officeId = await requireExternalEntryOfficeId();
+  const techDepartmentBuildingId = await requireTechDepartmentBuildingId(officeId);
   const healthByTag = new Map(listProviderHealth().map((row) => [row.providerTag, row.status]));
-  const deployed = await loadDeployedAgents();
-  const deployedIds = new Set(deployed.map((a) => a.id));
+
+  const [deployedRows, deployedExcludingTechRows, officeInventory] = await Promise.all([
+    loadOfficeDeployedAgentRows(officeId),
+    loadOfficeDeployedAgentRows(officeId, {
+      excludeBuildingObjectIds: [techDepartmentBuildingId],
+    }),
+    computeOfficeInventoryCounts(officeId),
+  ]);
+
+  const deployedAgents = officeInventory.agentsDeployedCount;
+  const deployedAgentsExcludingTechDept = deployedExcludingTechRows.length;
+  const deployedIds = new Set(deployedRows.map((a) => a.id));
 
   let availableAgents = 0;
   let onFallbackAgents = 0;
   let unavailableAgents = 0;
   let freeTierDeployed = 0;
 
-  for (const agent of deployed) {
+  for (const agent of deployedRows) {
     const tag = providerTagForAgent(agent.provider);
     const healthStatus = tag ? (healthByTag.get(tag) ?? null) : null;
     const bucket = classifyAgent(agent.provider, healthStatus);
@@ -162,19 +138,10 @@ export async function computeTechDepartmentStats(): Promise<TechDepartmentStats>
   if (isSupabaseConfigured()) {
     const supabase = getSupabaseAdmin();
     const todayStart = todayUtcIsoStart();
+    const officeInventory = await computeOfficeInventoryCounts(officeId);
 
-    const [agentsRes, connectionsRes, buildingsRes, chambersRes, routingRes] = await Promise.all([
+    const [agentsRes, routingRes] = await Promise.all([
       supabase.from("agents").select("id, provider"),
-      supabase
-        .from("connections")
-        .select("id", { count: "exact", head: true })
-        .eq("is_active", true),
-      supabase
-        .from("office_objects")
-        .select("id", { count: "exact", head: true })
-        .eq("office_id", AI_COUNCIL_OFFICE_ID)
-        .eq("object_type", "room"),
-      supabase.from("chambers").select("id", { count: "exact", head: true }),
       supabase
         .from("routing_logs")
         .select("id", { count: "exact", head: true })
@@ -185,14 +152,15 @@ export async function computeTechDepartmentStats(): Promise<TechDepartmentStats>
     totalAgentsInPool = pool.length;
     benchAgents = pool.filter((a) => !deployedIds.has(a.id)).length;
     agentsWithApiKey = pool.filter((a) => computeAgentStatus({ provider: a.provider }) === "online").length;
-    activeConnections = connectionsRes.count ?? 0;
-    buildingsCount = buildingsRes.count ?? 0;
-    chambersCount = chambersRes.count ?? 0;
+    activeConnections = officeInventory.activeConnectionsCount;
+    buildingsCount = officeInventory.buildingsCount;
+    chambersCount = officeInventory.chambersCount;
     routingDecisionsToday = routingRes.count ?? 0;
   }
 
   return {
-    deployedAgents: deployed.length,
+    deployedAgents,
+    deployedAgentsExcludingTechDept,
     availableAgents,
     onFallbackAgents,
     unavailableAgents,

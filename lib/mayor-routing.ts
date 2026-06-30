@@ -1,6 +1,12 @@
 import { MayorRoutingDecision } from "./office-types";
 import { MAYOR_ROUTING_PARSE_ERROR_ANSWER } from "./mayor-persona";
 import { isStructureMutationCommand } from "./structure-command-intent";
+import {
+  isOfficeInventoryCountQuestion,
+  isSystemReadOnlyQuestion,
+  SYSTEM_READONLY_DELEGATE_REASONING,
+  SYSTEM_READONLY_DELEGATE_TRACE,
+} from "./mayor-office-snapshot";
 import { resolveMainChamber } from "./workspace/resolve-main-chamber";
 import {
   requireExternalEntryOfficeId,
@@ -18,10 +24,13 @@ export type MayorBuildingRow = {
   routing_description?: string | null;
 };
 
-/** routing_logs.routing_action value for Mayor structure-command gate. */
+/** routing_logs.routing_action value for Mayor deterministic gates. */
 export function mayorRoutingLogAction(decision: MayorRoutingDecision): string {
   if (decision.action === "clarify") {
     return "clarify";
+  }
+  if (decision.matchedBy === "system_readonly_detector") {
+    return "system_diagnose_delegate";
   }
   if (decision.matchedBy === "structure_command") {
     return "structure_delegate";
@@ -29,9 +38,12 @@ export function mayorRoutingLogAction(decision: MayorRoutingDecision): string {
   return decision.action;
 }
 
+type TechDepartmentDelegateMatchedBy = "structure_command" | "system_readonly_detector";
+
 async function delegateToTechDepartment(
   reasoning: string,
   trace: string[],
+  matchedBy: TechDepartmentDelegateMatchedBy,
 ): Promise<MayorRoutingDecision> {
   const officeId = await requireExternalEntryOfficeId();
   const techBuildingId = await requireTechDepartmentBuildingId(officeId);
@@ -39,13 +51,37 @@ async function delegateToTechDepartment(
   return {
     action: "delegate",
     target: techBuildingId,
-    matchedBy: "structure_command",
+    matchedBy,
     confidence: 1,
     reasoning,
     trace,
     delegatedBuildingId: techBuildingId,
     delegatedChamberId: mainChamber?.chamberRegistryId ?? null,
   };
+}
+
+/** Deterministic structure mutation gate → Tech Department. */
+export async function resolveStructureMutationMayorRoutingDecision(
+  taskText: string,
+): Promise<MayorRoutingDecision | null> {
+  if (!isStructureMutationCommand(taskText)) return null;
+  return delegateToTechDepartment(
+    "Structure mutation command detected by deterministic system gate — delegate to Tech Department",
+    ["structure_command_gate", "tech_department"],
+    "structure_command",
+  );
+}
+
+/** MCC-1: read-only system structure/routing questions → Tech Department diagnose. */
+export async function resolveSystemReadOnlyMayorRoutingDecision(
+  taskText: string,
+): Promise<MayorRoutingDecision | null> {
+  if (!isSystemReadOnlyQuestion(taskText)) return null;
+  return delegateToTechDepartment(
+    SYSTEM_READONLY_DELEGATE_REASONING,
+    [...SYSTEM_READONLY_DELEGATE_TRACE],
+    "system_readonly_detector",
+  );
 }
 
 /**
@@ -66,12 +102,15 @@ export async function resolveDeterministicMayorRoutingDecision(
     };
   }
 
-  if (isStructureMutationCommand(taskText)) {
-    return delegateToTechDepartment(
-      "Structure mutation command detected by deterministic system gate — delegate to Tech Department",
-      ["structure_command_gate", "tech_department"],
-    );
+  if (isOfficeInventoryCountQuestion(taskText)) {
+    return null;
   }
+
+  const structure = await resolveStructureMutationMayorRoutingDecision(taskText);
+  if (structure) return structure;
+
+  const systemReadOnly = await resolveSystemReadOnlyMayorRoutingDecision(taskText);
+  if (systemReadOnly) return systemReadOnly;
 
   return null;
 }

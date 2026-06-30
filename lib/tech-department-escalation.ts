@@ -1,10 +1,8 @@
-import { AI_COUNCIL_OFFICE_ID } from "./ai-council-ids";
 import { getSupabaseAdmin, isSupabaseConfigured } from "./supabase/admin";
 import { resolveCityHallMainAgent } from "./workspace/city-hall-orchestrator";
-import {
-  TECH_DEPARTMENT_BUILDING_ID,
-  TECH_DEPARTMENT_CITY_HALL_CONNECTION_ID,
-} from "./workspace/tech-department";
+import { findTechDepartmentCityHallConnection as findTechDepartmentCityHallConnectionByGraph } from "./workspace/graph-identity";
+import { requireExternalEntryOfficeId } from "./workspace/graph-identity-required";
+import { TECH_DEPARTMENT_CITY_HALL_CONNECTION_ID } from "./workspace/tech-department";
 
 export { TECH_DEPARTMENT_CITY_HALL_CONNECTION_ID };
 
@@ -74,43 +72,22 @@ export async function findTechDepartmentCityHallConnection(): Promise<{
 } | null> {
   if (!isSupabaseConfigured()) return null;
 
-  const supabase = getSupabaseAdmin();
+  const officeId = await requireExternalEntryOfficeId();
+  const result = await findTechDepartmentCityHallConnectionByGraph(officeId);
+  const connection = result.value;
 
-  const { data: cityHall } = await supabase
-    .from("office_objects")
-    .select("id")
-    .eq("office_id", AI_COUNCIL_OFFICE_ID)
-    .eq("object_type", "room")
-    .eq("label", "City Hall")
-    .limit(1)
-    .maybeSingle();
-
-  if (!cityHall?.id) return null;
-
-  const { data: conn } = await supabase
-    .from("connections")
-    .select(
-      "id, target_entity_id, is_active, connection_permissions(send_tasks, read_results)",
-    )
-    .eq("source_entity_id", TECH_DEPARTMENT_BUILDING_ID)
-    .eq("target_entity_id", cityHall.id)
-    .eq("is_active", true)
-    .limit(1)
-    .maybeSingle();
-
-  if (!conn?.id) return null;
-
-  const perms = conn.connection_permissions as
-    | { send_tasks?: boolean; read_results?: boolean }
-    | { send_tasks?: boolean; read_results?: boolean }[]
-    | null;
-  const perm = Array.isArray(perms) ? perms[0] : perms;
+  if (!connection) {
+    console.info(
+      `[tech-department-escalation] connection missing (resolver source=${result.source}, unresolvedReason=${result.unresolvedReason ?? "none"}), no-op as before`,
+    );
+    return null;
+  }
 
   return {
-    connectionId: conn.id,
-    targetEntityId: conn.target_entity_id,
-    sendTasks: perm?.send_tasks === true,
-    readResults: perm?.read_results === true,
+    connectionId: connection.connectionId,
+    targetEntityId: connection.targetEntityId,
+    sendTasks: connection.sendTasks,
+    readResults: connection.readResults,
   };
 }
 
@@ -142,14 +119,15 @@ export async function escalateToCityHall(
   if (shouldThrottle(key)) return null;
 
   const connection = await findTechDepartmentCityHallConnection();
-  if (!connection?.sendTasks) {
+  if (!connection) {
     console.warn(
-      "[tech-department-escalation] City Hall connection missing or send_tasks disabled",
+      "[tech-department-escalation] City Hall system edge missing or inactive",
     );
     return null;
   }
 
-  const mayor = await resolveCityHallMainAgent(AI_COUNCIL_OFFICE_ID);
+  const officeId = await requireExternalEntryOfficeId();
+  const mayor = await resolveCityHallMainAgent(officeId);
   const userMessage =
     input.userMessage?.trim() ||
     defaultUserMessage(input.kind, input.provider, error);

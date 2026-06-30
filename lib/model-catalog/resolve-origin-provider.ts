@@ -27,6 +27,11 @@ const ORIGIN_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
 };
 
+export function formatCatalogGatewayLabel(gateway: string): string {
+  const slug = normalizeOriginSlug(gateway);
+  return ORIGIN_LABELS[slug] ?? titleCaseSlug(slug);
+}
+
 export function normalizeOriginSlug(value: string): string {
   return value.trim().toLowerCase().replace(/_/g, "-");
 }

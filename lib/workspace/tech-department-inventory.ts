@@ -23,6 +23,7 @@ export function computeClientTechInventory(
 
   return {
     deployedAgents,
+    deployedAgentsExcludingTechDept: deployedAgents,
     availableAgents: deployedAgents,
     onFallbackAgents: 0,
     unavailableAgents: 0,

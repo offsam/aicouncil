@@ -1827,7 +1827,7 @@ export async function executeChatTask(
     );
   }
 
-  const result = await processTask(workingTaskText, sourceEntityId, { officeId });
+  const result = await processTask(workingTaskText, sourceEntityId);
 
   if (result.mode === "workflow") {
     const supabase = getSupabaseAdmin();
