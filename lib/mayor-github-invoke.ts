@@ -7,6 +7,7 @@ import {
   readFile,
   searchCode,
 } from "./github-connector";
+import { retrieveForQuery } from "./github-rag/retrieve";
 import { insertLlmUsageLog } from "./llm-usage-log";
 import { logAnthropicCacheUsage } from "./mayor-context-budget";
 import { MAYOR_GITHUB_TOOL_DEFINITIONS } from "./mayor-github-tools";
@@ -144,6 +145,39 @@ async function executeMayorGithubTool(
   });
 
   try {
+    if (name === "github_semantic_search") {
+      const semanticQuery = typeof input.query === "string" ? input.query.trim() : "";
+      if (!semanticQuery) {
+        return JSON.stringify({ mode: "fallback", reason: "query is required" });
+      }
+      const { owner, repo, branch } = resolved;
+      const result = await retrieveForQuery({
+        query: semanticQuery,
+        owner,
+        repo,
+        branch,
+      });
+
+      if (result.mode === "fallback") {
+        return JSON.stringify({
+          mode: "fallback",
+          reason: result.reason,
+          instruction:
+            "Index not available. Use github_search_code or github_read_file instead.",
+        });
+      }
+
+      return JSON.stringify({
+        mode: "semantic",
+        files: result.files.map((file) => ({
+          path: file.path,
+          score: file.score,
+          truncated: file.truncated ?? false,
+          content: file.content,
+        })),
+      });
+    }
+
     if (name === "github_get_repo_tree") {
       const { owner, repo, branch } = resolved;
       if (!owner || !repo) {
@@ -437,6 +471,13 @@ export async function invokeMayorWithGitHubTools(params: {
           params.modelId,
           "Anthropic stop_reason tool_use but no tool_use blocks",
         );
+      }
+
+      if (iterationNumber === 1 && toolUses[0]?.name !== "github_semantic_search") {
+        console.warn("[mayor-github] semantic search not used first", {
+          toolName: toolUses[0]?.name ?? null,
+          iteration: iterationNumber,
+        });
       }
 
       messages = [
