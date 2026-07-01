@@ -1,5 +1,5 @@
-import pg from "pg";
 import type { EmbeddingProvider } from "./embedding-provider";
+import { getSupabaseAdmin } from "../supabase/admin";
 
 export type SemanticSearchResult = {
   chunkId: string;
@@ -11,30 +11,10 @@ export type SemanticSearchResult = {
 };
 
 export const DEFAULT_TOP_K = 30;
+export const RAG_SEARCH_MODE = "rpc" as const;
 
 function vectorToPgLiteral(values: number[]): string {
   return `[${values.join(",")}]`;
-}
-
-async function withPgClient<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const pwd =
-    process.env.SUPABASE_DB_PASSWORD?.trim() || process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  const ref = url?.match(/https:\/\/([^.]+)/)?.[1];
-  if (!ref || !pwd) {
-    throw new Error("Database credentials missing for semantic search");
-  }
-
-  const client = new pg.Client({
-    connectionString: `postgresql://postgres:${encodeURIComponent(pwd)}@db.${ref}.supabase.co:5432/postgres`,
-    ssl: { rejectUnauthorized: false },
-  });
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.end();
-  }
 }
 
 function normalizeScore(raw: unknown): number {
@@ -142,104 +122,35 @@ function expansionPathTokens(query: string, extraTerms: string[] = []): string[]
   return [...tokens];
 }
 
-async function fetchKeywordCandidates(
-  repositoryId: string,
-  patterns: string[],
-  mode: "path" | "path_or_text",
-  limit: number,
-): Promise<
-  Array<{
-    id: string;
-    path: string;
-    chunk_index: number;
-    chunk_text: string;
-    language: string | null;
-  }>
-> {
-  if (patterns.length === 0) {
-    return [];
-  }
-
-  return withPgClient(async (client) => {
-    const ilikePatterns = patterns.map((pattern) => `%${pattern}%`);
-    const conditions =
-      mode === "path"
-        ? ilikePatterns.map((_, index) => `f.path ILIKE $${index + 2}`).join(" OR ")
-        : ilikePatterns
-            .map((_, index) => `(f.path ILIKE $${index + 2} OR c.chunk_text ILIKE $${index + 2})`)
-            .join(" OR ");
-
-    const result = await client.query<{
-      id: string;
-      path: string;
-      chunk_index: number;
-      chunk_text: string;
-      language: string | null;
-    }>(
-      `
-        SELECT
-          c.id,
-          f.path,
-          c.chunk_index,
-          c.chunk_text,
-          f.language
-        FROM github_chunks c
-        JOIN github_files f ON f.id = c.file_id
-        WHERE f.repository_id = $1
-          AND (${conditions})
-        LIMIT $${ilikePatterns.length + 2}
-      `,
-      [repositoryId, ...ilikePatterns, limit],
-    );
-
-    return result.rows;
-  });
+function buildKeywordTerms(query: string, expansionTerms?: string[]): string[] {
+  const expansionPhrases = [...new Set(expansionTerms ?? expandCodeAuditQuery(query))];
+  return [
+    ...new Set([
+      ...tokenizeQuery(query),
+      ...expansionPhrases.map((term) => term.toLowerCase()),
+      ...expansionPathTokens(query, expansionPhrases),
+    ]),
+  ].filter(Boolean);
 }
 
-function scoreKeywordMatch(
-  filePath: string,
-  chunkText: string,
-  primaryTokens: string[],
-  expansionTokens: string[],
-  query: string,
-): number {
-  const pathLower = filePath.toLowerCase();
-  const textLower = chunkText.toLowerCase();
-  let score = 0;
+type RpcChunkRow = {
+  chunk_id: string;
+  file_path: string;
+  chunk_index: number;
+  chunk_text: string;
+  language: string | null;
+  score: number | string;
+};
 
-  for (const token of expansionTokens) {
-    const tokenLower = token.toLowerCase();
-    if (pathLower.includes(tokenLower)) {
-      score += 0.45;
-      if (pathLower.includes(`/${tokenLower}`) || pathLower.endsWith(tokenLower)) {
-        score += 0.12;
-      }
-    }
-    if (textLower.includes(tokenLower)) {
-      score += 0.12;
-    }
-  }
-
-  for (const token of primaryTokens) {
-    const tokenLower = token.toLowerCase();
-    if (pathLower.includes(tokenLower)) {
-      score += 0.12;
-    }
-    if (textLower.includes(tokenLower)) {
-      score += 0.06;
-    }
-  }
-
-  const codePathSegments = ["lib/", "app/", "src/", "pages/", "components/"];
-  if (codePathSegments.some((segment) => pathLower.includes(segment))) {
-    score += 0.05;
-  }
-
-  if (isCodeAuditQuery(query) && isTestOrScriptPath(pathLower)) {
-    score -= 0.2;
-  }
-
-  return score;
+function mapRpcRows(rows: RpcChunkRow[]): SemanticSearchResult[] {
+  return rows.map((row) => ({
+    chunkId: row.chunk_id,
+    filePath: row.file_path,
+    chunkIndex: row.chunk_index,
+    chunkText: row.chunk_text,
+    language: row.language,
+    score: normalizeScore(row.score),
+  }));
 }
 
 export async function semanticSearch(params: {
@@ -259,52 +170,23 @@ export async function semanticSearch(params: {
     throw new Error("Embedding provider returned empty query vector");
   }
 
-  return withPgClient(async (client) => {
-    await client.query("BEGIN");
-    try {
-      await client.query("SET LOCAL ivfflat.probes = 10");
-
-      const result = await client.query<{
-        id: string;
-        path: string;
-        chunk_index: number;
-        chunk_text: string;
-        language: string | null;
-        score: unknown;
-      }>(
-        `
-          SELECT
-            c.id,
-            f.path,
-            c.chunk_index,
-            c.chunk_text,
-            f.language,
-            1 - (e.embedding <=> $2::vector) AS score
-          FROM github_embeddings e
-          JOIN github_chunks c ON c.id = e.chunk_id
-          JOIN github_files f ON f.id = c.file_id
-          WHERE f.repository_id = $1
-          ORDER BY e.embedding <=> $2::vector
-          LIMIT $3
-        `,
-        [params.repositoryId, vectorToPgLiteral(queryVector), topK],
-      );
-
-      await client.query("COMMIT");
-
-      return result.rows.map((row) => ({
-        chunkId: row.id,
-        filePath: row.path,
-        chunkIndex: row.chunk_index,
-        chunkText: row.chunk_text,
-        language: row.language,
-        score: normalizeScore(row.score),
-      }));
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    }
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.rpc("match_github_chunks", {
+    p_repository_id: params.repositoryId,
+    p_query_embedding: vectorToPgLiteral(queryVector),
+    p_match_count: topK,
   });
+
+  if (error) {
+    throw new Error(`match_github_chunks RPC failed: ${error.message}`);
+  }
+
+  const results = mapRpcRows((data ?? []) as RpcChunkRow[]);
+  console.log("[github-rag] semantic results", {
+    searchMode: RAG_SEARCH_MODE,
+    count: results.length,
+  });
+  return results;
 }
 
 export async function keywordSearch(params: {
@@ -319,54 +201,29 @@ export async function keywordSearch(params: {
   }
 
   const topK = params.topK ?? DEFAULT_TOP_K;
-  const primaryTokens = tokenizeQuery(query);
-  const expansionPhrases = [...new Set(params.expansionTerms ?? expandCodeAuditQuery(query))];
-  const expansionTokens = expansionPathTokens(query, expansionPhrases);
-
-  const candidateMap = new Map<
-    string,
-    {
-      id: string;
-      path: string;
-      chunk_index: number;
-      chunk_text: string;
-      language: string | null;
-    }
-  >();
-
-  const expansionFetches = expansionPhrases.map((phrase) =>
-    fetchKeywordCandidates(params.repositoryId, [phrase.toLowerCase()], "path_or_text", 12),
-  );
-  const [primaryRows, ...expansionBatchRows] = await Promise.all([
-    fetchKeywordCandidates(params.repositoryId, primaryTokens, "path_or_text", 80),
-    ...expansionFetches,
-  ]);
-
-  for (const row of [primaryRows, ...expansionBatchRows].flat()) {
-    candidateMap.set(row.id, row);
+  const terms = buildKeywordTerms(query, params.expansionTerms);
+  if (terms.length === 0) {
+    return [];
   }
 
-  return [...candidateMap.values()]
-    .map((row) => {
-      const score = scoreKeywordMatch(
-        row.path,
-        row.chunk_text,
-        primaryTokens,
-        expansionTokens,
-        query,
-      );
-      return {
-        chunkId: row.id,
-        filePath: row.path,
-        chunkIndex: row.chunk_index,
-        chunkText: row.chunk_text,
-        language: row.language,
-        score,
-      };
-    })
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.rpc("keyword_search_github_chunks", {
+    p_repository_id: params.repositoryId,
+    p_terms: terms,
+    p_match_count: topK,
+  });
+
+  if (error) {
+    throw new Error(`keyword_search_github_chunks RPC failed: ${error.message}`);
+  }
+
+  const results = mapRpcRows((data ?? []) as RpcChunkRow[]).filter((row) => row.score > 0);
+  console.log("[github-rag] keyword results", {
+    searchMode: RAG_SEARCH_MODE,
+    termCount: terms.length,
+    count: results.length,
+  });
+  return results;
 }
 
 export async function hybridSearch(params: {
@@ -382,6 +239,7 @@ export async function hybridSearch(params: {
 
   const topK = params.topK ?? DEFAULT_TOP_K;
   const expandedTerms = expandCodeAuditQuery(query);
+  const startedAt = Date.now();
 
   const [semanticResults, keywordResults] = await Promise.all([
     semanticSearch({
@@ -424,7 +282,7 @@ export async function hybridSearch(params: {
     }
   }
 
-  return [...merged.values()]
+  const results = [...merged.values()]
     .map((result) => ({
       chunkId: result.chunkId,
       filePath: result.filePath,
@@ -437,6 +295,16 @@ export async function hybridSearch(params: {
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
+
+  console.log("[github-rag] hybrid results", {
+    searchMode: RAG_SEARCH_MODE,
+    semanticCount: semanticResults.length,
+    keywordCount: keywordResults.length,
+    hybridCount: results.length,
+    durationMs: Date.now() - startedAt,
+  });
+
+  return results;
 }
 
 export function deduplicateToFiles(

@@ -1,6 +1,6 @@
 import { readFile } from "../github-connector";
 import { createOpenAIEmbeddingProvider } from "./embedding-provider";
-import { deduplicateToFiles, hybridSearch } from "./search";
+import { deduplicateToFiles, hybridSearch, RAG_SEARCH_MODE } from "./search";
 import { getSupabaseAdmin } from "../supabase/admin";
 
 export const MAX_RETRIEVED_FILE_CHARS = 20_000;
@@ -20,6 +20,20 @@ type RepositoryStatusRow = {
   id: string;
   status: string;
 };
+
+function safeSearchErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/sk-[A-Za-z0-9\-_]+/gi, "sk-[REDACTED]")
+    .replace(/ghp_[A-Za-z0-9]+/gi, "ghp_[REDACTED]")
+    .replace(/postgresql:\/\/[^\s]+/gi, "postgresql://[REDACTED]")
+    .slice(0, 300);
+}
+
+function previewQuery(query: string): string {
+  return query.slice(0, 120);
+}
 
 async function loadRepository(params: {
   owner: string;
@@ -62,6 +76,15 @@ export async function retrieveForQuery(params: {
   const repo = params.repo.trim();
   const branch = (params.branch ?? "main").trim();
   const query = params.query.trim();
+  const startedAt = Date.now();
+
+  console.log("[github-rag] retrieval start", {
+    owner,
+    repo,
+    branch,
+    queryPreview: previewQuery(query),
+    searchMode: RAG_SEARCH_MODE,
+  });
 
   if (!owner || !repo) {
     return {
@@ -81,19 +104,29 @@ export async function retrieveForQuery(params: {
 
   try {
     const repository = await loadRepository({ owner, repo, branch });
+    console.log("[github-rag] repository lookup", {
+      found: Boolean(repository),
+      repositoryId: repository?.id ?? null,
+      status: repository?.status ?? null,
+    });
+
     if (!repository) {
+      const reason = "index not ready: NOT_INDEXED";
+      console.log("[github-rag] fallback", { reason, durationMs: Date.now() - startedAt });
       return {
         mode: "fallback",
         files: [],
-        reason: "index not ready: NOT_INDEXED",
+        reason,
       };
     }
 
     if (repository.status !== "READY") {
+      const reason = `index not ready: ${repository.status}`;
+      console.log("[github-rag] fallback", { reason, durationMs: Date.now() - startedAt });
       return {
         mode: "fallback",
         files: [],
-        reason: `index not ready: ${repository.status}`,
+        reason,
       };
     }
 
@@ -117,15 +150,26 @@ export async function retrieveForQuery(params: {
       });
     }
 
+    console.log("[github-rag] retrieval complete", {
+      mode: "semantic",
+      filePaths: files.map((file) => file.path),
+      durationMs: Date.now() - startedAt,
+    });
+
     return {
       mode: "semantic",
       files,
     };
   } catch (err) {
+    const reason = `rag search failed: ${safeSearchErrorMessage(err)}`;
+    console.error("[github-rag] fallback", {
+      reason,
+      durationMs: Date.now() - startedAt,
+    });
     return {
       mode: "fallback",
       files: [],
-      reason: err instanceof Error ? err.message : String(err),
+      reason,
     };
   }
 }
