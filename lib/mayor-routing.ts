@@ -115,11 +115,7 @@ export async function resolveDeterministicMayorRoutingDecision(
   return null;
 }
 
-function extractJsonObject(rawText: string): unknown {
-  const trimmed = rawText.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = (fenced?.[1] ?? trimmed).trim();
-
+function parseJsonEnvelopeCandidate(candidate: string): unknown {
   const jsonMatch = candidate.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error("No JSON object found in Mayor response");
@@ -133,6 +129,23 @@ function extractJsonObject(rawText: string): unknown {
     if (salvaged) return salvaged;
     throw new Error("Invalid JSON in Mayor response");
   }
+}
+
+function extractJsonObject(rawText: string): unknown {
+  const trimmed = rawText.trim();
+
+  // Compact JSON (e.g. after patchMayorEnvelopeAnswer) — inner ``` are string content, not fences.
+  if (trimmed.startsWith("{")) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return parseJsonEnvelopeCandidate(trimmed);
+    }
+  }
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced?.[1] ?? trimmed).trim();
+  return parseJsonEnvelopeCandidate(candidate);
 }
 
 /** Best-effort extraction when the model truncates closing braces/quotes. */

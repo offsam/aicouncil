@@ -123,6 +123,49 @@ async function main() {
     answer: plainParsed.answer,
   });
 
+  const fencedRaw =
+    "```json\n" +
+    JSON.stringify({
+      routing: {
+        action: "answer_self",
+        matchedBy: "semantic",
+        confidence: 1,
+        reasoning: "fenced envelope",
+        trace: ["mayor_agent"],
+      },
+      answer: "Ответ в markdown fence.",
+    }) +
+    "\n```";
+  const fencedParsed = parseMayorAgentRoutingEnvelope(fencedRaw, BUILDINGS);
+  record(
+    "parse outer ```json fence",
+    fencedParsed.decision.action === "answer_self" && fencedParsed.answer === "Ответ в markdown fence.",
+    { action: fencedParsed.decision.action, answer: fencedParsed.answer },
+  );
+
+  const innerFenceRaw = JSON.stringify({
+    routing: {
+      action: "answer_self",
+      matchedBy: "semantic",
+      confidence: 1,
+      reasoning: "code audit",
+      trace: ["github_semantic_search"],
+    },
+    answer: "## Branch\n```typescript\nif (x) { return y; }\n```\n",
+  });
+  const innerFenceParsed = parseMayorAgentRoutingEnvelope(innerFenceRaw, BUILDINGS);
+  record(
+    "parse compact JSON with inner ``` in answer",
+    innerFenceParsed.decision.action === "answer_self" &&
+      !innerFenceParsed.decision.trace.includes("parse_error") &&
+      innerFenceParsed.answer?.includes("```typescript"),
+    {
+      action: innerFenceParsed.decision.action,
+      trace: innerFenceParsed.decision.trace,
+      answerPreview: innerFenceParsed.answer?.slice(0, 80),
+    },
+  );
+
   const lowConf = await finalizeMayorRoutingDecision(
     {
       action: "delegate",
