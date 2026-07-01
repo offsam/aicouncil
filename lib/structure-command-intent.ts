@@ -397,6 +397,145 @@ export function hasDiagnoseConflictSignal(text: string): boolean {
   return true;
 }
 
+/** Mayor GitHub tool loop mode (MAYOR-CODING-GATE-3 — shared with structure gate). */
+export type MayorGitHubToolMode = "code_audit" | "coding_task";
+
+/** Conceptual / explanatory questions — not GitHub tool candidates (shared gate). */
+const GITHUB_TOOL_CONCEPTUAL_EXCLUSIONS: RegExp[] = [
+  /^что\s+такое\b/iu,
+  /^what\s+is\b/i,
+  /^what\s+are\b/i,
+  /^объясни\b/iu,
+  /^explain\b/i,
+  /^почему\b/iu,
+  /^why\b/i,
+  /^зачем\b/iu,
+  /^какие\s+(?:преимущества|минусы|плюсы|недостатки)\b/iu,
+  /^what\s+are\s+the\s+(?:advantages|benefits|pros|cons)\b/i,
+  /^расскажи\s+(?:про|о\b)/iu,
+  /^tell\s+me\s+about\b/i,
+];
+
+/** Explicit source-change / file-plan requests → coding_task. */
+const CODING_TASK_GITHUB_PATTERNS: RegExp[] = [
+  /(?:^|[\s,.:;!?])поменяй\s+код/iu,
+  /(?:^|[\s,.:;!?])измени\s+код/iu,
+  /(?:^|[\s,.:;!?])исправь\s+код/iu,
+  /\bchange\s+(the\s+)?code\b/i,
+  /\bfix\s+(the\s+)?code\b/i,
+  /\bmodify\s+(the\s+)?code\b/i,
+  /\brefactor\b/i,
+  /\bimplement\b.+\bcode\b/i,
+  /(?:^|[\s,.:;!?])добавь.+(?:в\s+код)/iu,
+  /(?:^|[\s,.:;!?])добавь\s.+(?:логирован|logging|console\.log)/iu,
+  /(?:^|[\s,.:;!?])добавить\s.+(?:логирован|logging|console\.log)/iu,
+];
+
+/** Substrings that signal a coding plan / file-change task (not structure mutation). */
+const CODING_TASK_INTENT_PHRASES = [
+  "файлы нужно изменить",
+  "файлы надо изменить",
+  "покажи какие файлы",
+  "покажи план",
+  "изменить код",
+  "измени код",
+  "добавить лог",
+  "добавь лог",
+  "добавь console",
+  "добавить console",
+];
+
+/** Non-code "where" questions — office/building, not repo lookup. */
+const CODE_LOCATION_WHERE_NON_CODE_SUBJECT =
+  /^(?:мой|моя|моё|наш|наша|наше|ты|вы|офис|отдел|здание|документ|встреча|контакт|юрист|юристы|ресторан)\b/iu;
+
+/** Locate / inspect implementation in source (MAYOR-GITHUB-GATE-ADR-1 + GATE-3). */
+const CODE_LOCATION_AUDIT_PATTERNS: RegExp[] = [
+  /(?:^|[\s,.:;!?])где\s+(?:реализован|реализовано|реализована|находится|искать|лежит|хранится|считается|формируется|вызывается|создаётся|делается|определён|определяется|описан|описана|описано)/iu,
+  /(?:^|[\s,.:;!?])как\s+(?:реализован|реализовано|реализована|устроен|устроено|устроена|работает)/iu,
+  /(?:^|[\s,.:;!?])каким\s+образом\s+работает/iu,
+  /(?:^|[\s,.:;!?])какой\s+файл/iu,
+  /(?:^|[\s,.:;!?])в\s+каком\s+файле/iu,
+  /(?:^|[\s,.:;!?])покажи\s+(?:код|реализацию)/iu,
+  /(?:^|[\s,.:;!?])найди.+(?:в\s+коде|файл|где)/iu,
+  /(?:^|[\s,.:;!?])проверь.+код/iu,
+  /(?:^|[\s,.:;!?])проверь.+\bgithub\b/i,
+  /(?:код|файл|\bpipeline\b|\bcall\b|\bfunction\b).+\bgithub\b/i,
+  /\bwhere\s+(?:is|are|does|do)\b.+\b(code|file|located|implemented|defined|stored|handled)\b/i,
+  /\bwhere\s+(?:is|does|are).+\b(formed|called|created|invoked|initialized)\b/i,
+  /\bhow\s+(?:is|are|does|do)\b.+\b(implemented|built|structured|handled)\b/i,
+  /\bhow\s+does\b.+\bwork\b/i,
+  /\bwhich\s+file\b/i,
+  /\bshow\s+(?:the\s+)?(?:code|implementation)\b/i,
+  /\bfind\s+(?:the\s+)?(?:file|code)\b/i,
+  /\blocate\s+(?:the\s+)?code\b/i,
+  /\bcode\s+audit\b/i,
+  /\busage\s+logging\b/i,
+  /\bcheck\b.+\b(code|github|repo)\b/i,
+  /найди.+\bgithub\b/i,
+  /\b(look|search)\b.+\bgithub\b/i,
+  /\bgithub\b.+(?:код|файл|где|\bpipeline\b|\bcall\b|\bfunction\b)/iu,
+];
+
+function hasBareCodeLocationQuestion(text: string): boolean {
+  const match = text.match(/^где\s+(.+?)\??\s*$/iu);
+  if (!match) return false;
+
+  const subject = match[1]!.trim();
+  if (!subject || CODE_LOCATION_WHERE_NON_CODE_SUBJECT.test(subject)) {
+    return false;
+  }
+
+  if (/[A-Za-z]/.test(subject)) return true;
+  if (/\s/.test(subject) && subject.split(/\s+/).length >= 2) return true;
+
+  return false;
+}
+
+export function isConceptualGitHubToolExclusion(text: string): boolean {
+  return GITHUB_TOOL_CONCEPTUAL_EXCLUSIONS.some((pattern) => pattern.test(text.trim()));
+}
+
+/** User wants a coding plan or source change brief — not workspace structure mutation. */
+export function hasExplicitCodingTaskIntent(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+
+  if (CODING_TASK_GITHUB_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  const lower = normalized.toLowerCase();
+  return CODING_TASK_INTENT_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
+/** User wants to locate or inspect implementation in the repository. */
+export function hasCodeLocationAuditIntent(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+
+  if (CODE_LOCATION_AUDIT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+  return hasBareCodeLocationQuestion(normalized);
+}
+
+/**
+ * Shared GitHub tool routing — single source of truth for code/coding intent (MAYOR-CODING-GATE-3).
+ * Analysis-only waivers do NOT apply here (they only block structure mutation).
+ */
+export function classifyMayorGitHubToolMode(text: string): MayorGitHubToolMode | null {
+  const normalized = text.trim();
+  if (!normalized) return null;
+  if (isConceptualGitHubToolExclusion(normalized)) return null;
+
+  if (hasExplicitCodingTaskIntent(normalized)) return "coding_task";
+  if (hasCodeLocationAuditIntent(normalized)) return "code_audit";
+  if (hasCodingOrCodeAnalysisIntent(normalized)) return "coding_task";
+
+  return null;
+}
+
 /**
  * True when the user asks to mutate workspace structure (create building/chamber, assign agents, etc.).
  * STRUCTURE-MUTATION-GATE-2: code/analysis waivers first; generic verbs require structure entity nouns.
