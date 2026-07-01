@@ -249,22 +249,37 @@ function logRawFinalAnswerPreview(raw: string): void {
   });
 }
 
+function stripJsonCodeFence(raw: string): string {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match ? match[1].trim() : raw;
+}
+
 function patchMayorEnvelopeAnswer(raw: string): string {
   try {
-    const obj = JSON.parse(raw) as {
+    const normalized = stripJsonCodeFence(raw);
+    const hadCodeFence = /^```(?:json)?\s*[\s\S]*?\s*```$/i.test(raw.trim());
+    const obj = JSON.parse(normalized) as {
       answer?: unknown;
       routing?: { action?: unknown; reasoning?: unknown };
     };
+    if (!obj || typeof obj !== "object") {
+      return raw;
+    }
+
+    let patched = false;
     if (
-      obj &&
-      typeof obj === "object" &&
       obj.routing?.action === "answer_self" &&
       (!obj.answer || !String(obj.answer).trim()) &&
       obj.routing?.reasoning &&
       String(obj.routing.reasoning).trim()
     ) {
       obj.answer = String(obj.routing.reasoning).trim();
+      patched = true;
       console.log("[mayor-github] patched empty envelope answer from routing.reasoning");
+    }
+
+    if (patched || hadCodeFence) {
       return JSON.stringify(obj);
     }
   } catch {
