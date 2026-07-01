@@ -206,6 +206,49 @@ function extractTextAnswer(content: AnthropicContentBlock[] | undefined): string
   return text || null;
 }
 
+const RAW_FINAL_ANSWER_PREVIEW_MAX = 1500;
+
+function redactTokensForLog(text: string): string {
+  return text
+    .replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]")
+    .replace(/sk-ant-[A-Za-z0-9\-_]+/gi, "sk-ant-[REDACTED]")
+    .replace(/ghp_[A-Za-z0-9]+/gi, "ghp_[REDACTED]")
+    .replace(/github_pat_[A-Za-z0-9_]+/gi, "github_pat_[REDACTED]")
+    .replace(/x-api-key["']?\s*[:=]\s*["']?[A-Za-z0-9\-_]+/gi, "x-api-key: [REDACTED]")
+    .replace(/"(api[_-]?key|token|secret|password)"\s*:\s*"[^"]+"/gi, '"$1":"[REDACTED]"');
+}
+
+function logRawFinalAnswerPreview(raw: string): void {
+  const preview = redactTokensForLog(raw).slice(0, RAW_FINAL_ANSWER_PREVIEW_MAX);
+  let envelopeHints: Record<string, unknown> = { parseableJson: false };
+  try {
+    const obj = JSON.parse(raw) as {
+      answer?: unknown;
+      routing?: { action?: unknown; reasoning?: unknown };
+    };
+    if (obj && typeof obj === "object") {
+      envelopeHints = {
+        parseableJson: true,
+        hasAnswerField: "answer" in obj,
+        answerType: obj.answer === null ? "null" : typeof obj.answer,
+        answerLength: typeof obj.answer === "string" ? obj.answer.length : null,
+        routingAction: obj.routing?.action ?? null,
+        hasRoutingReasoning: Boolean(
+          obj.routing?.reasoning && String(obj.routing.reasoning).trim(),
+        ),
+      };
+    }
+  } catch {
+    // non-JSON final text — preview only
+  }
+  console.log("[mayor-github] raw final answer preview", {
+    rawLength: raw.length,
+    previewTruncated: raw.length > RAW_FINAL_ANSWER_PREVIEW_MAX,
+    preview,
+    ...envelopeHints,
+  });
+}
+
 function patchMayorEnvelopeAnswer(raw: string): string {
   try {
     const obj = JSON.parse(raw) as {
@@ -363,6 +406,7 @@ export async function invokeMayorWithGitHubTools(params: {
           finalStopReason: data.stop_reason ?? null,
           hasTextResponse: true,
         });
+        logRawFinalAnswerPreview(answer);
         return patchMayorEnvelopeAnswer(answer);
       }
 
