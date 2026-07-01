@@ -80,11 +80,49 @@ export function looksLikeProviderErrorText(text: string): boolean {
   return PROVIDER_LEAK_PATTERN.test(text);
 }
 
+function looksLikeCodeAuditAnswer(text: string): boolean {
+  if (/\blib\/|\bapp\/|\bsrc\/|\bpages\/|\bcomponents\//i.test(text)) {
+    return true;
+  }
+
+  if (/\w{4,}\(\)/i.test(text)) {
+    return true;
+  }
+
+  if (/```/.test(text)) {
+    return true;
+  }
+
+  if (/\w+\.(ts|tsx|js|jsx|py|go|rs|md)\b/i.test(text)) {
+    return true;
+  }
+
+  return false;
+}
+
+function looksLikeHardProviderError(text: string): boolean {
+  return /429|quota|rate.?limit|tokens per (?:day|minute)|\bTP[MD]\b|org_01/i.test(text);
+}
+
 /** Sanitize arbitrary answer/error text before returning to user-facing channels. */
 export function sanitizeUserFacingText(text: string): string {
-  if (!text.trim()) return text;
+  if (!text.trim()) {
+    return text;
+  }
+
   if (looksLikeProviderErrorText(text)) {
+    // Реальные ошибки провайдера всегда скрываем
+    if (looksLikeHardProviderError(text)) {
+      return PROVIDER_UNAVAILABLE_USER_MESSAGE;
+    }
+
+    // Code Audit ответы не скрываем
+    if (looksLikeCodeAuditAnswer(text)) {
+      return text;
+    }
+
     return PROVIDER_UNAVAILABLE_USER_MESSAGE;
   }
+
   return text;
 }
