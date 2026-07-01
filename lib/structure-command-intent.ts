@@ -1,3 +1,89 @@
+/** Workspace entity nouns — generic mutation verbs require one of these (STRUCTURE-MUTATION-GATE-2). */
+export const STRUCTURE_ENTITY_NOUNS = [
+  "здание",
+  "building",
+  "chamber",
+  "отдел",
+  "department",
+  "агент",
+  "agent",
+  "connection",
+  "связь",
+  "кабель",
+  "назначение агента",
+  "структура города",
+  "структура системы",
+  "палат",
+  "комнат",
+  "новый отдел",
+  "новое здание",
+];
+
+/** Read-only / planning waivers — block structure mutation even when mutation verbs appear. */
+const ANALYSIS_ONLY_WAIVER_PATTERNS: RegExp[] = [
+  /пока\s+ничего\s+не\s+меняй/iu,
+  /ничего\s+не\s+меняй/iu,
+  /(?:^|[\s,.:;!?])только\s+покажи/iu,
+  /(?:^|[\s,.:;!?])только\s+скажи/iu,
+  /без\s+изменений/iu,
+  /(?:^|[\s,.:;!?])не\s+выполняй/iu,
+  /(?:^|[\s,.:;!?])не\s+изменяй/iu,
+  /(?:^|[\s,.:;!?])не\s+создавай/iu,
+  /(?:^|[\s,.:;!?])не\s+удаляй/iu,
+  /(?:^|[\s,.:;!?])сначала\s+покажи/iu,
+];
+
+/** Code / implementation cues beyond hasCodeAuditKeywords (STRUCTURE-MUTATION-GATE-2). */
+const CODE_ANALYSIS_PHRASES = [
+  "файлы нужно изменить",
+  "файлы надо изменить",
+  "какие файлы",
+  "покажи какие файлы",
+  "покажи план",
+  "console.log",
+  "логирование",
+  "логирован",
+  "logging",
+  "перед вызовом",
+  "перед вызов",
+  "implementation",
+  "repository",
+  "github",
+  "typescript",
+  "javascript",
+  "api route",
+  "route.ts",
+  "исходный код",
+  "source code",
+  "в коде",
+  "изменить код",
+  "измени код",
+  "добавить лог",
+  "добавь лог",
+  "добавь console",
+  "добавить console",
+];
+
+/** Generic modify verbs — require structure entity noun unless explicit phrase matches. */
+const GENERIC_MODIFY_STRUCTURE_VERB_RE =
+  /(?:измен[\p{L}]*|изменить|помен[\p{L}]*|поменять|обнов[\p{L}]*|обновить|update)/giu;
+
+/** Other structure verbs not covered by constructive/destructive stems. */
+const OTHER_STRUCTURE_VERBS_WITH_NOUN = [
+  "перенес",
+  "перенести",
+  "перемест",
+  "переимен",
+  "переименуй",
+  "переименовать",
+  "отключ",
+  "отключи",
+  "disconnect",
+  "rename",
+  "move",
+  "connect",
+];
+
 /** Substring match (case-insensitive) — supports Cyrillic and morphology (e.g. агент → агентов). */
 export const STRUCTURE_MUTATION_KEYWORDS = [
   "создай",
@@ -186,6 +272,42 @@ export function hasExplicitCodeReference(text: string): boolean {
   if (/(?:^|[\s(])@\/[\w./-]+/.test(text)) return true;
   if (/(?:^|[\s(])(?:lib|app|components|scripts)\/[\w./-]+/.test(normalized)) return true;
   if (/\b(?:функци[яию]|function|метод)\s+[`'"]?\w+/iu.test(text)) return true;
+  // camelCase identifiers (callConfiguredAgentProvider, executeMayorTask, …)
+  if (/\b[a-z][a-z0-9]*(?:[A-Z][a-zA-Z0-9]+)+\b/.test(text)) return true;
+  return false;
+}
+
+/** User explicitly asks for read-only analysis / planning — no structure mutation (STRUCTURE-MUTATION-GATE-2). */
+export function hasAnalysisOnlyWaiver(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+  return ANALYSIS_ONLY_WAIVER_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+/** True when text names a workspace structure entity (building, chamber, agent assignment, …). */
+export function hasStructureEntityNoun(text: string): boolean {
+  return containsAnyKeyword(text, STRUCTURE_ENTITY_NOUNS);
+}
+
+/** Code change / file analysis intent — takes priority over structure mutation gate. */
+export function hasCodingOrCodeAnalysisIntent(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+
+  if (hasCodeAuditKeywords(normalized) || hasExplicitCodeReference(normalized)) {
+    return true;
+  }
+
+  const lower = normalized.toLowerCase();
+  if (CODE_ANALYSIS_PHRASES.some((phrase) => lower.includes(phrase))) {
+    return true;
+  }
+
+  // «код» without workspace structure nouns — source change, not city structure
+  if (/\b(?:код|code)\b/iu.test(normalized) && !hasStructureEntityNoun(normalized)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -222,14 +344,23 @@ export function hasStructureMutationKeywords(text: string): boolean {
   return containsAnyKeyword(text, STRUCTURE_MUTATION_KEYWORDS);
 }
 
-/** True when user explicitly requests a structural DB/workspace change (SAFETY-01). */
+/** True when user explicitly requests a structural DB/workspace change (SAFETY-01 + GATE-2). */
 export function hasExplicitStructureMutationIntent(text: string): boolean {
   const normalized = text.trim();
   if (!normalized) return false;
-  if (containsAnyKeyword(normalized, EXTENDED_STRUCTURE_MUTATION_VERBS)) return true;
+
   if (containsAnyKeyword(normalized, EXPLICIT_STRUCTURE_MUTATION_PHRASES)) return true;
   if (PERMISSION_MUTATION_RE.test(normalized)) return true;
   if (DESCRIPTION_MUTATION_RE.test(normalized)) return true;
+
+  const hasNoun = hasStructureEntityNoun(normalized);
+  if (!hasNoun) return false;
+
+  if (hasDestructiveStructureIntent(normalized)) return true;
+  if (hasConstructiveStructureIntent(normalized)) return true;
+  if (hasAffirmativeVerbMatch(normalized, GENERIC_MODIFY_STRUCTURE_VERB_RE)) return true;
+  if (containsAnyKeyword(normalized, OTHER_STRUCTURE_VERBS_WITH_NOUN)) return true;
+
   return false;
 }
 
@@ -268,11 +399,14 @@ export function hasDiagnoseConflictSignal(text: string): boolean {
 
 /**
  * True when the user asks to mutate workspace structure (create building/chamber, assign agents, etc.).
- * SAFETY-01: bare nouns (агент, здание) are insufficient; complaints without explicit mutation are excluded.
+ * STRUCTURE-MUTATION-GATE-2: code/analysis waivers first; generic verbs require structure entity nouns.
  */
 export function isStructureMutationCommand(taskText: string): boolean {
   const text = taskText.trim();
   if (!text) return false;
+
+  if (hasAnalysisOnlyWaiver(text)) return false;
+  if (hasCodingOrCodeAnalysisIntent(text)) return false;
 
   if (isComplaintOrCorrectionRequest(text) && !hasExplicitStructureMutationIntent(text)) {
     return false;
